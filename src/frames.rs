@@ -64,11 +64,17 @@ pub fn get_metadata(video_path: &Path) -> Result<VideoMetadata> {
 }
 
 pub fn auto_fps(duration: f64, max_frames: u32) -> f32 {
+    if duration <= 0.0 {
+        return MAX_FPS;
+    }
     let raw_fps = max_frames as f32 / duration as f32;
     raw_fps.min(MAX_FPS)
 }
 
 pub fn auto_fps_focus(duration: f64, max_frames: u32) -> f32 {
+    if duration <= 0.0 {
+        return MAX_FPS;
+    }
     let raw_fps = max_frames as f32 / duration as f32;
     raw_fps.min(MAX_FPS)
 }
