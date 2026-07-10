@@ -1,0 +1,38 @@
+[package]
+name = "watch-rs"
+version = "1.0.0"
+edition = "2024"
+license = "MIT"
+description = "Hermes video analysis tool — Rust rewrite of hermes-video"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+yt-dlp = "2"
+ez-ffmpeg = "0.12"
+ffmpeg-next = "8"
+av-scenechange = "0.24"
+image = "0.25"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-openai = { version = "0.41", features = ["audio"] }
+groq-api-rust = "0.3"
+reqwest = { version = "0.12", features = ["multipart", "json"] }
+whisper-rs = { version = "0.16", optional = true }
+dotenvy = "0.15"
+dirs = "6"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+chrono = "0.4"
+tempfile = "3"
+which = "7"
+
+[features]
+default = []
+local-whisper = ["whisper-rs"]
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"

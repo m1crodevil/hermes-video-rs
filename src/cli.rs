@@ -1,0 +1,78 @@
+use clap::{Parser, ValueEnum};
+
+/// Watch a video and analyze it
+#[derive(Parser)]
+#[command(name = "watch", about = "Download, extract frames, and transcribe a video")]
+pub struct Cli {
+    /// Video URL or local file path
+    pub source: String,
+
+    /// Detail mode: transcript, efficient, balanced, token-burner
+    #[arg(long)]
+    pub detail: Option<DetailMode>,
+
+    /// Frame cap override
+    #[arg(long)]
+    pub max_frames: Option<u32>,
+
+    /// Frame width in pixels (default 512)
+    #[arg(long, default_value_t = 512)]
+    pub resolution: u32,
+
+    /// Override auto-fps (max 2.0)
+    #[arg(long)]
+    pub fps: Option<f32>,
+
+    /// Comma-separated timestamps to grab frames at
+    #[arg(long)]
+    pub timestamps: Option<String>,
+
+    /// Range start (SS, MM:SS, or HH:MM:SS)
+    #[arg(long)]
+    pub start: Option<String>,
+
+    /// Range end (SS, MM:SS, or HH:MM:SS)
+    #[arg(long)]
+    pub end: Option<String>,
+
+    /// Working directory
+    #[arg(long)]
+    pub out_dir: Option<String>,
+
+    /// Force Whisper backend
+    #[arg(long)]
+    pub whisper: Option<WhisperBackend>,
+
+    /// Disable Whisper fallback
+    #[arg(long)]
+    pub no_whisper: bool,
+
+    /// Disable near-duplicate frame removal
+    #[arg(long)]
+    pub no_dedup: bool,
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum DetailMode {
+    Transcript,
+    Efficient,
+    Balanced,
+    TokenBurner,
+}
+
+impl std::fmt::Display for DetailMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DetailMode::Transcript => write!(f, "transcript"),
+            DetailMode::Efficient => write!(f, "efficient"),
+            DetailMode::Balanced => write!(f, "balanced"),
+            DetailMode::TokenBurner => write!(f, "token-burner"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum WhisperBackend {
+    Groq,
+    Openai,
+}
