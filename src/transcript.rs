@@ -4,10 +4,14 @@ use crate::output::TranscriptSegment;
 
 pub fn parse_json3(content: &str) -> Result<Vec<TranscriptSegment>> {
     let data: serde_json::Value = serde_json::from_str(content)?;
-    let events = data["events"].as_array().unwrap_or(&[]);
+    let empty = vec![];
+    let empty_vec = vec![];
+    let events = data["events"].as_array().unwrap_or(&empty_vec);
     let mut segments = Vec::new();
     for event in events {
-        let segs = event["segs"].as_array().unwrap_or(&[]);
+        let empty_segs = vec![];
+        let segs = event["segs"].as_array().unwrap_or(&empty_segs);
+        let segs = event["segs"].as_array().unwrap_or(&empty_segs);
         let text: String = segs.iter().filter_map(|s| s["utf8"].as_str()).collect::<Vec<_>>().join("").trim().to_string();
         if text.is_empty() || text == "\n" { continue; }
         let start_ms = event["tStartMs"].as_f64().unwrap_or(0.0);
