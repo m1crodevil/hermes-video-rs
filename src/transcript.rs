@@ -1,22 +1,32 @@
-use std::path::Path;
-use crate::error::{WatchError, Result};
+use crate::error::{Result, WatchError};
 use crate::output::TranscriptSegment;
+use std::path::Path;
 
 pub fn parse_json3(content: &str) -> Result<Vec<TranscriptSegment>> {
     let data: serde_json::Value = serde_json::from_str(content)?;
-    let empty = vec![];
     let empty_vec = vec![];
     let events = data["events"].as_array().unwrap_or(&empty_vec);
     let mut segments = Vec::new();
     for event in events {
         let empty_segs = vec![];
         let segs = event["segs"].as_array().unwrap_or(&empty_segs);
-        let segs = event["segs"].as_array().unwrap_or(&empty_segs);
-        let text: String = segs.iter().filter_map(|s| s["utf8"].as_str()).collect::<Vec<_>>().join("").trim().to_string();
-        if text.is_empty() || text == "\n" { continue; }
+        let text: String = segs
+            .iter()
+            .filter_map(|s| s["utf8"].as_str())
+            .collect::<Vec<_>>()
+            .join("")
+            .trim()
+            .to_string();
+        if text.is_empty() || text == "\n" {
+            continue;
+        }
         let start_ms = event["tStartMs"].as_f64().unwrap_or(0.0);
         let dur_ms = event["dDurationMs"].as_f64().unwrap_or(0.0);
-        segments.push(TranscriptSegment { start: start_ms / 1000.0, end: (start_ms + dur_ms) / 1000.0, text });
+        segments.push(TranscriptSegment {
+            start: start_ms / 1000.0,
+            end: (start_ms + dur_ms) / 1000.0,
+            text,
+        });
     }
     Ok(dedupe(segments))
 }
@@ -25,7 +35,11 @@ pub fn parse_vtt(content: &str) -> Result<Vec<TranscriptSegment>> {
     let mut segments = Vec::new();
     let mut lines = content.lines().peekable();
     while let Some(line) = lines.peek() {
-        if line.starts_with("WEBVTT") || line.trim().is_empty() { lines.next(); } else { break; }
+        if line.starts_with("WEBVTT") || line.trim().is_empty() {
+            lines.next();
+        } else {
+            break;
+        }
     }
     while let Some(line) = lines.next() {
         if line.contains("-->") {
@@ -35,11 +49,17 @@ pub fn parse_vtt(content: &str) -> Result<Vec<TranscriptSegment>> {
                 let end = parse_vtt_time(parts[1].trim());
                 let mut text = String::new();
                 while let Some(next) = lines.next() {
-                    if next.trim().is_empty() { break; }
-                    if !text.is_empty() { text.push(' '); }
+                    if next.trim().is_empty() {
+                        break;
+                    }
+                    if !text.is_empty() {
+                        text.push(' ');
+                    }
                     text.push_str(next.trim());
                 }
-                if !text.is_empty() { segments.push(TranscriptSegment { start, end, text }); }
+                if !text.is_empty() {
+                    segments.push(TranscriptSegment { start, end, text });
+                }
             }
         }
     }
@@ -49,8 +69,17 @@ pub fn parse_vtt(content: &str) -> Result<Vec<TranscriptSegment>> {
 fn parse_vtt_time(s: &str) -> f64 {
     let parts: Vec<&str> = s.split(':').collect();
     match parts.len() {
-        3 => { let h: f64 = parts[0].parse().unwrap_or(0.0); let m: f64 = parts[1].parse().unwrap_or(0.0); let sec: f64 = parts[2].replace(',', ".").parse().unwrap_or(0.0); h * 3600.0 + m * 60.0 + sec }
-        2 => { let m: f64 = parts[0].parse().unwrap_or(0.0); let sec: f64 = parts[1].replace(',', ".").parse().unwrap_or(0.0); m * 60.0 + sec }
+        3 => {
+            let h: f64 = parts[0].parse().unwrap_or(0.0);
+            let m: f64 = parts[1].parse().unwrap_or(0.0);
+            let sec: f64 = parts[2].replace(',', ".").parse().unwrap_or(0.0);
+            h * 3600.0 + m * 60.0 + sec
+        }
+        2 => {
+            let m: f64 = parts[0].parse().unwrap_or(0.0);
+            let sec: f64 = parts[1].replace(',', ".").parse().unwrap_or(0.0);
+            m * 60.0 + sec
+        }
         _ => 0.0,
     }
 }
@@ -58,7 +87,12 @@ fn parse_vtt_time(s: &str) -> f64 {
 fn dedupe(segments: Vec<TranscriptSegment>) -> Vec<TranscriptSegment> {
     let mut out = Vec::new();
     for seg in segments {
-        if out.last().map_or(false, |s: &TranscriptSegment| s.text == seg.text) { continue; }
+        if out
+            .last()
+            .map_or(false, |s: &TranscriptSegment| s.text == seg.text)
+        {
+            continue;
+        }
         out.push(seg);
     }
     out
@@ -69,6 +103,9 @@ pub fn parse_subtitle_file(path: &Path) -> Result<Vec<TranscriptSegment>> {
     match path.extension().and_then(|e| e.to_str()) {
         Some("json3") => parse_json3(&content),
         Some("vtt") => parse_vtt(&content),
-        _ => Err(WatchError::Ffmpeg(format!("Unsupported subtitle format: {:?}", path.extension()))),
+        _ => Err(WatchError::Ffmpeg(format!(
+            "Unsupported subtitle format: {:?}",
+            path.extension()
+        ))),
     }
 }
