@@ -14,14 +14,28 @@ pub struct VideoMetadata {
 
 pub fn get_metadata(video_path: &Path) -> Result<VideoMetadata> {
     // Use ffprobe via subprocess (reliable, matches Python version)
+    let video_str = video_path.to_str().unwrap_or("<invalid path>");
     let output = std::process::Command::new("ffprobe")
         .args(["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams",
-               video_path.to_str().unwrap()])
+               video_str])
         .output()
-        .map_err(|e| WatchError::Ffmpeg(format!("ffprobe not found: {}", e)))?;
+        .map_err(|e| WatchError::Ffmpeg(format!("ffprobe not found or failed to execute for '{}': {}", video_str, e)))?;
     
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(WatchError::Ffmpeg(format!(
+            "ffprobe failed for '{}': exit code {:?}, stderr: {}",
+            video_str, output.status.code(), stderr.trim())));
+    }
+
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| WatchError::Ffmpeg(format!("ffprobe parse error: {}", e)))?;
+        .map_err(|e| {
+            let preview = String::from_utf8_lossy(&output.stdout);
+            let snippet = if preview.len() > 200 { &preview[..200] } else { &preview };
+            WatchError::Ffmpeg(format!(
+                "ffprobe returned invalid JSON for '{}': {} (stdout preview: {:?})",
+                video_str, e, snippet))
+        })?;
     
     let empty_streams: Vec<serde_json::Value> = vec![];
     let streams = json["streams"].as_array().unwrap_or(&empty_streams);
@@ -30,6 +44,16 @@ pub fn get_metadata(video_path: &Path) -> Result<VideoMetadata> {
     
     let duration = fmt["duration"].as_f64().unwrap_or(
         video_stream.and_then(|s| s["duration"].as_f64()).unwrap_or(0.0));
+
+    // Validate duration
+    if duration <= 0.0 {
+        return Err(WatchError::Ffmpeg(format!(
+            "Video has zero or negative duration ({:.2}s) — file may be corrupt or not a valid video: {}",
+            duration, video_str)));
+    }
+    if duration < 1.0 {
+        eprintln!("[watch-rs] warning: very short video ({:.2}s), frame extraction may produce few or no frames", duration);
+    }
     
     Ok(VideoMetadata {
         duration,
@@ -57,13 +81,14 @@ pub fn extract_frames (
     max_frames: u32,
 ) -> Result<Vec<FrameInfo>> {
     std::fs::create_dir_all(out_dir)?;
+    let video_str = video_path.to_str().unwrap_or("<invalid path>");
     let filter = format!("fps={},scale=w='min({},iw)':h='min({},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
         fps, resolution, MAX_READ_DIMENSION);
     let output_pattern = out_dir.join("frame_%04d.jpg").to_string_lossy().to_string();
     
     let status = std::process::Command::new("ffmpeg")
         .args([
-            "-i", video_path.to_str().unwrap(),
+            "-i", video_str,
             "-vf", &filter,
             "-q:v", "2",
             "-frames:v", &max_frames.to_string(),
@@ -71,10 +96,12 @@ pub fn extract_frames (
             &output_pattern,
         ])
         .status()
-        .map_err(|e| WatchError::Ffmpeg(format!("ffmpeg not found: {}", e)))?;
+        .map_err(|e| WatchError::Ffmpeg(format!("ffmpeg not found or failed to execute for '{}': {}", video_str, e)))?;
     
     if !status.success() {
-        return Err(WatchError::Ffmpeg("ffmpeg frame extraction failed".into()));
+        return Err(WatchError::Ffmpeg(format!(
+            "ffmpeg frame extraction failed for '{}' (exit code: {:?}). Check that the file is a valid video and ffmpeg supports its codec.",
+            video_str, status.code())));
     }
     
     let mut frames = Vec::new();

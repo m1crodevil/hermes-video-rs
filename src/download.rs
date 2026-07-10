@@ -15,7 +15,22 @@ pub fn is_url(source: &str) -> bool {
 
 pub fn resolve_local(path: &str) -> Result<DownloadResult> {
     let p = Path::new(path).canonicalize()
-        .map_err(|_| WatchError::Download(format!("File not found: {}", path)))?;
+        .map_err(|e| WatchError::Download(format!("File not found or not accessible '{}': {}", path, e)))?;
+
+    // Check for common video/audio file extensions
+    let valid_extensions = [
+        "mp4", "mkv", "webm", "mov", "avi", "m4v", "flv", "wmv",
+        "ts", "mts", "3gp", "ogv",
+        "mp3", "m4a", "wav", "flac", "ogg", "aac",
+    ];
+    if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+        if !valid_extensions.contains(&ext.to_lowercase().as_str()) {
+            eprintln!("[watch-rs] warning: '{}' has extension '.{}' which may not be a supported video/audio file", path, ext);
+        }
+    } else {
+        eprintln!("[watch-rs] warning: '{}' has no file extension — may not be a video file", path);
+    }
+
     Ok(DownloadResult {
         video_path: Some(p.clone()),
         subtitle_path: None,

@@ -1,28 +1,20 @@
-mod cli;
-mod config;
-mod dedup;
-mod download;
-mod error;
-mod frames;
-mod output;
-mod scene;
-mod setup;
-mod timestamp;
-mod transcript;
-mod whisper;
-
 use clap::Parser;
-use cli::Cli;
-use config::{DetailMode, WatchConfig};
-use output::{FrameInfo, WatchReport};
-use std::path::{Path, PathBuf};
-use timestamp::parse_time;
+use watch_rs::cli;
+use watch_rs::config::{DetailMode, WatchConfig};
+use watch_rs::download;
+use watch_rs::dedup;
+use watch_rs::frames;
+use watch_rs::output::{FrameInfo, WatchReport};
+use watch_rs::timestamp::parse_time;
+use watch_rs::transcript;
+use watch_rs::whisper;
+use std::path::PathBuf;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let cli = Cli::parse();
+    let cli = cli::Cli::parse();
     let config = WatchConfig::from_env();
 
     // Resolve detail mode
@@ -61,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Step 2: Parse transcript from captions
-    let mut transcript_segments: Vec<output::TranscriptSegment> = Vec::new();
+    let mut transcript_segments: Vec<watch_rs::output::TranscriptSegment> = Vec::new();
     let mut transcript_source = String::from("none");
 
     if let Some(ref sub_path) = dl_result.subtitle_path {

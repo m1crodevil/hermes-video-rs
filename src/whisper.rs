@@ -1,35 +1,132 @@
 use std::path::Path;
+use std::time::Duration;
 use crate::error::{WatchError, Result};
 use crate::output::TranscriptSegment;
 
 pub async fn transcribe_groq(audio_path: &Path, api_key: &str) -> Result<Vec<TranscriptSegment>> {
-    let audio_bytes = std::fs::read(audio_path).map_err(|e| WatchError::Whisper(format!("Failed to read audio: {}", e)))?;
+    let audio_bytes = std::fs::read(audio_path)
+        .map_err(|e| WatchError::Whisper(format!("Failed to read audio '{}': {}", audio_path.display(), e)))?;
     let client = reqwest::Client::new();
-    let part = reqwest::multipart::Part::bytes(audio_bytes).file_name("audio.mp3").mime_str("audio/mpeg").unwrap();
-    let form = reqwest::multipart::Form::new().part("file", part).text("model", "whisper-large-v3").text("language", "en").text("response_format", "verbose_json");
-    let resp = client.post("https://api.groq.com/openai/v1/audio/transcriptions").header("Authorization", format!("Bearer {}", api_key)).multipart(form).send().await.map_err(|e| WatchError::Whisper(format!("Groq request failed: {}", e)))?;
-    if !resp.status().is_success() { return Err(WatchError::Whisper(format!("Groq API error {}", resp.status()))); }
-    let json: serde_json::Value = resp.json().await.map_err(|e| WatchError::Whisper(format!("Groq parse error: {}", e)))?;
-    if let Some(segments) = json["segments"].as_array() {
-        Ok(segments.iter().filter_map(|seg| Some(TranscriptSegment { start: seg["start"].as_f64()?, end: seg["end"].as_f64()?, text: seg["text"].as_str()?.to_string() })).collect())
-    } else {
-        Ok(vec![TranscriptSegment { start: 0.0, end: 0.0, text: json["text"].as_str().unwrap_or("").to_string() }])
+    let max_retries = 3u32;
+
+    for attempt in 0..=max_retries {
+        let part = reqwest::multipart::Part::bytes(audio_bytes.clone())
+            .file_name("audio.mp3")
+            .mime_str("audio/mpeg")
+            .unwrap();
+        let form = reqwest::multipart::Form::new()
+            .part("file", part)
+            .text("model", "whisper-large-v3")
+            .text("language", "en")
+            .text("response_format", "verbose_json");
+
+        let resp = client.post("https://api.groq.com/openai/v1/audio/transcriptions")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| WatchError::Whisper(format!("Groq request failed: {}", e)))?;
+
+        // Handle rate limiting (HTTP 429) with exponential backoff
+        if resp.status().as_u16() == 429 {
+            if attempt < max_retries {
+                let retry_after = resp.headers().get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or_else(|| (2u64).pow(attempt));
+                eprintln!("[watch-rs] rate limited by Groq API, retrying in {}s (attempt {}/{})...", retry_after, attempt + 1, max_retries);
+                tokio::time::sleep(Duration::from_secs(retry_after)).await;
+                continue;
+            }
+            return Err(WatchError::Whisper(format!("Groq API rate limit exceeded after {} retries", max_retries)));
+        }
+
+        if !resp.status().is_success() {
+            return Err(WatchError::Whisper(format!("Groq API error: HTTP {}", resp.status())));
+        }
+
+        let json: serde_json::Value = resp.json().await
+            .map_err(|e| WatchError::Whisper(format!("Groq response parse error: {}", e)))?;
+
+        if let Some(segments) = json["segments"].as_array() {
+            return Ok(segments.iter().filter_map(|seg| Some(TranscriptSegment {
+                start: seg["start"].as_f64()?,
+                end: seg["end"].as_f64()?,
+                text: seg["text"].as_str()?.to_string(),
+            })).collect());
+        } else {
+            return Ok(vec![TranscriptSegment {
+                start: 0.0,
+                end: 0.0,
+                text: json["text"].as_str().unwrap_or("").to_string(),
+            }]);
+        }
     }
+
+    unreachable!()
 }
 
 pub async fn transcribe_openai(audio_path: &Path, api_key: &str) -> Result<Vec<TranscriptSegment>> {
-    let audio_bytes = std::fs::read(audio_path).map_err(|e| WatchError::Whisper(format!("Failed to read audio: {}", e)))?;
+    let audio_bytes = std::fs::read(audio_path)
+        .map_err(|e| WatchError::Whisper(format!("Failed to read audio '{}': {}", audio_path.display(), e)))?;
     let client = reqwest::Client::new();
-    let part = reqwest::multipart::Part::bytes(audio_bytes).file_name("audio.mp3").mime_str("audio/mpeg").unwrap();
-    let form = reqwest::multipart::Form::new().part("file", part).text("model", "whisper-1").text("language", "en").text("response_format", "verbose_json");
-    let resp = client.post("https://api.openai.com/v1/audio/transcriptions").header("Authorization", format!("Bearer {}", api_key)).multipart(form).send().await.map_err(|e| WatchError::Whisper(format!("OpenAI request failed: {}", e)))?;
-    if !resp.status().is_success() { return Err(WatchError::Whisper(format!("OpenAI API error {}", resp.status()))); }
-    let json: serde_json::Value = resp.json().await.map_err(|e| WatchError::Whisper(format!("OpenAI parse error: {}", e)))?;
-    if let Some(segments) = json["segments"].as_array() {
-        Ok(segments.iter().filter_map(|seg| Some(TranscriptSegment { start: seg["start"].as_f64()?, end: seg["end"].as_f64()?, text: seg["text"].as_str()?.to_string() })).collect())
-    } else {
-        Ok(vec![TranscriptSegment { start: 0.0, end: 0.0, text: json["text"].as_str().unwrap_or("").to_string() }])
+    let max_retries = 3u32;
+
+    for attempt in 0..=max_retries {
+        let part = reqwest::multipart::Part::bytes(audio_bytes.clone())
+            .file_name("audio.mp3")
+            .mime_str("audio/mpeg")
+            .unwrap();
+        let form = reqwest::multipart::Form::new()
+            .part("file", part)
+            .text("model", "whisper-1")
+            .text("language", "en")
+            .text("response_format", "verbose_json");
+
+        let resp = client.post("https://api.openai.com/v1/audio/transcriptions")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| WatchError::Whisper(format!("OpenAI request failed: {}", e)))?;
+
+        // Handle rate limiting (HTTP 429) with exponential backoff
+        if resp.status().as_u16() == 429 {
+            if attempt < max_retries {
+                let retry_after = resp.headers().get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or_else(|| (2u64).pow(attempt));
+                eprintln!("[watch-rs] rate limited by OpenAI API, retrying in {}s (attempt {}/{})...", retry_after, attempt + 1, max_retries);
+                tokio::time::sleep(Duration::from_secs(retry_after)).await;
+                continue;
+            }
+            return Err(WatchError::Whisper(format!("OpenAI API rate limit exceeded after {} retries", max_retries)));
+        }
+
+        if !resp.status().is_success() {
+            return Err(WatchError::Whisper(format!("OpenAI API error: HTTP {}", resp.status())));
+        }
+
+        let json: serde_json::Value = resp.json().await
+            .map_err(|e| WatchError::Whisper(format!("OpenAI response parse error: {}", e)))?;
+
+        if let Some(segments) = json["segments"].as_array() {
+            return Ok(segments.iter().filter_map(|seg| Some(TranscriptSegment {
+                start: seg["start"].as_f64()?,
+                end: seg["end"].as_f64()?,
+                text: seg["text"].as_str()?.to_string(),
+            })).collect());
+        } else {
+            return Ok(vec![TranscriptSegment {
+                start: 0.0,
+                end: 0.0,
+                text: json["text"].as_str().unwrap_or("").to_string(),
+            }]);
+        }
     }
+
+    unreachable!()
 }
 
 pub fn extract_audio(video_path: &Path, out_dir: &Path) -> Result<std::path::PathBuf> {
