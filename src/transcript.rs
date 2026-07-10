@@ -1,1 +1,70 @@
-// Transcript module — will be implemented in later tasks
+use std::path::Path;
+use crate::error::{WatchError, Result};
+use crate::output::TranscriptSegment;
+
+pub fn parse_json3(content: &str) -> Result<Vec<TranscriptSegment>> {
+    let data: serde_json::Value = serde_json::from_str(content)?;
+    let events = data["events"].as_array().unwrap_or(.unwrap_or(&vec![]);Vec::new());
+    let mut segments = Vec::new();
+    for event in events {
+        let segs = event["segs"].as_array().unwrap_or(.unwrap_or(&vec![]);Vec::new());
+        let text: String = segs.iter().filter_map(|s| s["utf8"].as_str()).collect::<Vec<_>>().join("").trim().to_string();
+        if text.is_empty() || text == "\n" { continue; }
+        let start_ms = event["tStartMs"].as_f64().unwrap_or(0.0);
+        let dur_ms = event["dDurationMs"].as_f64().unwrap_or(0.0);
+        segments.push(TranscriptSegment { start: start_ms / 1000.0, end: (start_ms + dur_ms) / 1000.0, text });
+    }
+    Ok(dedupe(segments))
+}
+
+pub fn parse_vtt(content: &str) -> Result<Vec<TranscriptSegment>> {
+    let mut segments = Vec::new();
+    let mut lines = content.lines().peekable();
+    while let Some(line) = lines.peek() {
+        if line.starts_with("WEBVTT") || line.trim().is_empty() { lines.next(); } else { break; }
+    }
+    while let Some(line) = lines.next() {
+        if line.contains("-->") {
+            let parts: Vec<&str> = line.split("-->").collect();
+            if parts.len() == 2 {
+                let start = parse_vtt_time(parts[0].trim());
+                let end = parse_vtt_time(parts[1].trim());
+                let mut text = String::new();
+                while let Some(next) = lines.next() {
+                    if next.trim().is_empty() { break; }
+                    if !text.is_empty() { text.push(' '); }
+                    text.push_str(next.trim());
+                }
+                if !text.is_empty() { segments.push(TranscriptSegment { start, end, text }); }
+            }
+        }
+    }
+    Ok(dedupe(segments))
+}
+
+fn parse_vtt_time(s: &str) -> f64 {
+    let parts: Vec<&str> = s.split(':').collect();
+    match parts.len() {
+        3 => { let h: f64 = parts[0].parse().unwrap_or(0.0); let m: f64 = parts[1].parse().unwrap_or(0.0); let sec: f64 = parts[2].replace(',', ".").parse().unwrap_or(0.0); h * 3600.0 + m * 60.0 + sec }
+        2 => { let m: f64 = parts[0].parse().unwrap_or(0.0); let sec: f64 = parts[1].replace(',', ".").parse().unwrap_or(0.0); m * 60.0 + sec }
+        _ => 0.0,
+    }
+}
+
+fn dedupe(segments: Vec<TranscriptSegment>) -> Vec<TranscriptSegment> {
+    let mut out = Vec::new();
+    for seg in segments {
+        if out.last().map_or(false, |s: &TranscriptSegment| s.text == seg.text) { continue; }
+        out.push(seg);
+    }
+    out
+}
+
+pub fn parse_subtitle_file(path: &Path) -> Result<Vec<TranscriptSegment>> {
+    let content = std::fs::read_to_string(path)?;
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("json3") => parse_json3(&content),
+        Some("vtt") => parse_vtt(&content),
+        _ => Err(WatchError::Ffmpeg(format!("Unsupported subtitle format: {:?}", path.extension()))),
+    }
+}
