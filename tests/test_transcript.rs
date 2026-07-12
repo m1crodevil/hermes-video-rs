@@ -1,4 +1,4 @@
-use watch_rs::transcript::{parse_json3, parse_vtt};
+use watch2::transcript::{parse_json3, parse_vtt};
 
 #[test]
 fn test_parse_json3_basic() {

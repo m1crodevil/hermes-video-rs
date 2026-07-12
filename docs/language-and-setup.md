@@ -389,7 +389,7 @@ fn main() -> Result<()> {
                     .map(|m| m.len() / (1024 * 1024))
                     .unwrap_or(0);
                 std::fs::remove_file(vp).ok();
-                eprintln!("[watch-rs] cleaned up video ({} MB)", size_mb);
+                eprintln!("[watch2] cleaned up video ({} MB)", size_mb);
             }
         }
     }

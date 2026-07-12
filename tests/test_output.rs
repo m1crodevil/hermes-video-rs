@@ -1,4 +1,4 @@
-use watch_rs::output::{WatchReport, FrameInfo, TranscriptSegment};
+use watch2::output::{WatchReport, FrameInfo, TranscriptSegment};
 
 fn make_test_report() -> WatchReport {
     WatchReport {

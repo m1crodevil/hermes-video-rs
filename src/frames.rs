@@ -63,7 +63,7 @@ pub fn get_metadata(video_path: &Path) -> Result<VideoMetadata> {
             duration, video_str)));
     }
     if duration < 1.0 {
-        eprintln!("[watch-rs] warning: very short video ({:.2}s), frame extraction may produce few or no frames", duration);
+        eprintln!("[watch2] warning: very short video ({:.2}s), frame extraction may produce few or no frames", duration);
     }
     
     Ok(VideoMetadata {
@@ -505,7 +505,7 @@ pub fn extract_scene_or_uniform(
             if !status.success() {
                 // Skip individual failures — don't abort the whole extraction
                 eprintln!(
-                    "[watch-rs] warning: ffmpeg failed to extract scene frame at ts={:.3}",
+                    "[watch2] warning: ffmpeg failed to extract scene frame at ts={:.3}",
                     ts
                 );
                 let _ = std::fs::remove_file(&frame_path);

@@ -1,12 +1,12 @@
 use clap::Parser;
-use watch_rs::cli;
-use watch_rs::config::{DetailMode, WatchConfig};
-use watch_rs::download;
-use watch_rs::frames;
-use watch_rs::output::{FrameInfo, WatchReport};
-use watch_rs::timestamp::parse_time;
-use watch_rs::transcript;
-use watch_rs::whisper;
+use watch2::cli;
+use watch2::config::{DetailMode, WatchConfig};
+use watch2::download;
+use watch2::frames;
+use watch2::output::{FrameInfo, WatchReport};
+use watch2::timestamp::parse_time;
+use watch2::transcript;
+use watch2::whisper;
 use std::path::PathBuf;
 
 #[tokio::main]
@@ -35,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
         None => tempfile::tempdir()?.keep(),
     };
     std::fs::create_dir_all(&work)?;
-    eprintln!("[watch-rs] working dir: {}", work.display());
+    eprintln!("[watch2] working dir: {}", work.display());
 
     let download_dir = work.join("download");
     let frames_dir = work.join("frames");
@@ -45,25 +45,25 @@ async fn main() -> anyhow::Result<()> {
     let mut dl_result: download::DownloadResult;
 
     if is_url {
-        eprintln!("[watch-rs] fetching metadata/captions...");
+        eprintln!("[watch2] fetching metadata/captions...");
         dl_result = download::fetch_captions(&cli.source, &download_dir)?;
     } else {
         dl_result = download::resolve_local(&cli.source)?;
     }
 
     // Step 2: Parse transcript from captions
-    let mut transcript_segments: Vec<watch_rs::output::TranscriptSegment> = Vec::new();
+    let mut transcript_segments: Vec<watch2::output::TranscriptSegment> = Vec::new();
     let mut transcript_source = String::from("none");
 
     if let Some(ref sub_path) = dl_result.subtitle_path {
-        eprintln!("[watch-rs] parsing subtitles from {}", sub_path.display());
+        eprintln!("[watch2] parsing subtitles from {}", sub_path.display());
         match transcript::parse_subtitle_file(sub_path) {
             Ok(segs) => {
                 transcript_segments = segs;
                 transcript_source = "captions".to_string();
             }
             Err(e) => {
-                eprintln!("[watch-rs] subtitle parse error: {}", e);
+                eprintln!("[watch2] subtitle parse error: {}", e);
             }
         }
     }
@@ -76,10 +76,10 @@ async fn main() -> anyhow::Result<()> {
         match frames::get_metadata(vp) {
             Ok(meta) => {
                 duration = meta.duration;
-                eprintln!("[watch-rs] duration: {:.1}s", duration);
+                eprintln!("[watch2] duration: {:.1}s", duration);
             }
             Err(e) => {
-                eprintln!("[watch-rs] metadata error: {}", e);
+                eprintln!("[watch2] metadata error: {}", e);
             }
         }
     }
@@ -100,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
     if detail != DetailMode::Transcript {
         // Need to download if we don't have video yet
         if video_path.is_none() && is_url {
-            eprintln!("[watch-rs] downloading video...");
+            eprintln!("[watch2] downloading video...");
             dl_result = download::download_video(&cli.source, &download_dir)?;
             video_path = dl_result.video_path;
 
@@ -142,14 +142,14 @@ async fn main() -> anyhow::Result<()> {
                     Ok((extracted, meta)) => {
                         if meta.dropped_out_of_window > 0 {
                             eprintln!(
-                                "[watch-rs] {} cue timestamp(s) outside focus range — dropped",
+                                "[watch2] {} cue timestamp(s) outside focus range — dropped",
                                 meta.dropped_out_of_window
                             );
                         }
                         cue_frames = extracted;
                         cue_meta = meta;
                     }
-                    Err(e) => eprintln!("[watch-rs] cue frame extraction error: {}", e),
+                    Err(e) => eprintln!("[watch2] cue frame extraction error: {}", e),
                 }
             }
 
@@ -166,14 +166,14 @@ async fn main() -> anyhow::Result<()> {
             // Dispatch to the correct frame extraction engine based on detail mode
             let (mut extracted, meta) = match detail {
                 DetailMode::Efficient => {
-                    eprintln!("[watch-rs] engine: keyframe (efficient mode)");
+                    eprintln!("[watch2] engine: keyframe (efficient mode)");
                     frames::extract_keyframes(
                         vp, &frames_dir, cli.resolution, max_frames,
                         focus_start, focus_end, !cli.no_dedup,
                     )?
                 }
                 DetailMode::Balanced | DetailMode::TokenBurner => {
-                    eprintln!("[watch-rs] engine: scene-or-uniform ({:.2} fps, cap: {})", fps, max_frames);
+                    eprintln!("[watch2] engine: scene-or-uniform ({:.2} fps, cap: {})", fps, max_frames);
                     frames::extract_scene_or_uniform(
                         vp, &frames_dir, fps, max_frames, cli.resolution, max_frames,
                         focus_start, focus_end, !cli.no_dedup,
@@ -201,12 +201,12 @@ async fn main() -> anyhow::Result<()> {
             frames = extracted;
             frames_dropped = meta.deduped_count;
             eprintln!(
-                "[watch-rs] engine: {}, candidates: {}, selected: {}, dropped: {}",
+                "[watch2] engine: {}, candidates: {}, selected: {}, dropped: {}",
                 meta.engine, meta.candidate_count, meta.selected_count, meta.deduped_count
             );
             if cue_meta.selected_count > 0 {
                 eprintln!(
-                    "[watch-rs] cue timestamps: {} extracted ({} dropped out of window)",
+                    "[watch2] cue timestamps: {} extracted ({} dropped out of window)",
                     cue_meta.selected_count, cue_meta.dropped_out_of_window
                 );
             }
@@ -229,7 +229,7 @@ async fn main() -> anyhow::Result<()> {
             };
 
             if let (Some(key), Some(vp)) = (api_key, video_path.as_ref()) {
-                eprintln!("[watch-rs] transcribing via {}...", backend);
+                eprintln!("[watch2] transcribing via {}...", backend);
                 match whisper::extract_audio(vp, &work) {
                     Ok(audio_path) => {
                         let result = match backend {
@@ -240,15 +240,15 @@ async fn main() -> anyhow::Result<()> {
                             Ok(segs) => {
                                 transcript_segments = segs;
                                 transcript_source = format!("whisper ({})", backend);
-                                eprintln!("[watch-rs] transcript: {} segments", transcript_segments.len());
+                                eprintln!("[watch2] transcript: {} segments", transcript_segments.len());
                             }
                             Err(e) => {
-                                eprintln!("[watch-rs] whisper error: {}", e);
+                                eprintln!("[watch2] whisper error: {}", e);
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("[watch-rs] audio extraction error: {}", e);
+                        eprintln!("[watch2] audio extraction error: {}", e);
                     }
                 }
             }
@@ -271,7 +271,7 @@ async fn main() -> anyhow::Result<()> {
                     .map(|m| m.len() / (1024 * 1024))
                     .unwrap_or(0);
                 std::fs::remove_file(vp).ok();
-                eprintln!("[watch-rs] cleaned up video ({} MB)", size_mb);
+                eprintln!("[watch2] cleaned up video ({} MB)", size_mb);
             }
         }
     }
@@ -340,8 +340,8 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", report.to_markdown());
             let json_path = work.join("report.json");
             match std::fs::write(&json_path, report.to_json()) {
-                Ok(()) => eprintln!("[watch-rs] report JSON: {}", json_path.display()),
-                Err(e) => eprintln!("[watch-rs] failed to write JSON: {}", e),
+                Ok(()) => eprintln!("[watch2] report JSON: {}", json_path.display()),
+                Err(e) => eprintln!("[watch2] failed to write JSON: {}", e),
             }
         }
     }

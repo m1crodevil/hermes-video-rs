@@ -110,13 +110,13 @@ pub fn resolve_local(path: &str) -> Result<DownloadResult> {
     if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
         if !valid_extensions.contains(&ext.to_lowercase().as_str()) {
             eprintln!(
-                "[watch-rs] warning: '{}' has extension '.{}' which may not be a supported video/audio file",
+                "[watch2] warning: '{}' has extension '.{}' which may not be a supported video/audio file",
                 path, ext
             );
         }
     } else {
         eprintln!(
-            "[watch-rs] warning: '{}' has no file extension — may not be a video file",
+            "[watch2] warning: '{}' has no file extension — may not be a video file",
             path
         );
     }
@@ -242,7 +242,7 @@ pub fn fetch_captions(url: &str, out_dir: &Path) -> Result<DownloadResult> {
     let lang_pattern = subtitle_lang_pattern(&detected_lang);
     let lang_name = get_language_name(&detected_lang);
     eprintln!(
-        "[watch-rs] subtitle language: {} ({}) — pattern: {}",
+        "[watch2] subtitle language: {} ({}) — pattern: {}",
         lang_name, detected_lang, lang_pattern
     );
 
@@ -329,7 +329,7 @@ pub fn download_video(url: &str, out_dir: &Path) -> Result<DownloadResult> {
     let lang_pattern = subtitle_lang_pattern(&detected_lang);
     let lang_name = get_language_name(&detected_lang);
     eprintln!(
-        "[watch-rs] subtitle language: {} ({}) — pattern: {}",
+        "[watch2] subtitle language: {} ({}) — pattern: {}",
         lang_name, detected_lang, lang_pattern
     );
 

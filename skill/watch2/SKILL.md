@@ -1,5 +1,5 @@
 ---
-name: watch-rs
+name: watch2
 version: "3.0.0"
 description: "Watch a video (URL or local path). Rust-powered analysis with frame extraction and transcript generation."
 argument-hint: " <url-or-path> [question]"
@@ -17,30 +17,30 @@ metadata:
     requires_toolsets: [terminal]
 ---
 
-# /watch-rs
+# /watch2
 
 Rust-powered video analysis. Faster startup (~5ms), smaller memory (~5-15MB), single binary (5.2MB).
 
 ## Binary
 
 ```bash
-which watch-rs || echo "Install: cp ~/hermes-video-rs/target/release/watch-rs /usr/local/bin/"
+which watch2 || echo "Install: cp ~/hermes-video-rs/target/release/watch2 /usr/local/bin/"
 ```
 
 ## Quick Start
 
 ```bash
 # Analyze a video
-watch-rs "https://youtu.be/abc"
+watch2 "https://youtu.be/abc"
 
 # Local file
-watch-rs ~/Videos/recording.mp4
+watch2 ~/Videos/recording.mp4
 
 # Detail modes
-watch-rs "https://youtu.be/abc" --detail transcript    # No frames
-watch-rs "https://youtu.be/abc" --detail efficient     # Keyframes, cap 50
-watch-rs "https://youtu.be/abc" --detail balanced      # Scene-aware, cap 100
-watch-rs "https://youtu.be/abc" --detail token-burner  # Uncapped
+watch2 "https://youtu.be/abc" --detail transcript    # No frames
+watch2 "https://youtu.be/abc" --detail efficient     # Keyframes, cap 50
+watch2 "https://youtu.be/abc" --detail balanced      # Scene-aware, cap 100
+watch2 "https://youtu.be/abc" --detail token-burner  # Uncapped
 ```
 
 ## CLI Options
@@ -63,7 +63,7 @@ watch-rs "https://youtu.be/abc" --detail token-burner  # Uncapped
 
 ## Workflow
 
-1. Run `watch-rs <source>` — outputs markdown report with frame paths + transcript
+1. Run `watch2 <source>` — outputs markdown report with frame paths + transcript
 2. Read each frame path to see the images
 3. Combine frames + transcript to answer user questions
 
@@ -87,13 +87,13 @@ watch-rs "https://youtu.be/abc" --detail token-burner  # Uncapped
 
 ```bash
 # Markdown (default)
-watch-rs video.mp4
+watch2 video.mp4
 
 # JSON (for programmatic use)
-watch-rs video.mp4 --output json | jq .
+watch2 video.mp4 --output json | jq .
 
 # Both (markdown to stdout + report.json file)
-watch-rs video.mp4 --output both
+watch2 video.mp4 --output both
 ```
 
 ## Language Detection

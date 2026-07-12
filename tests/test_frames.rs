@@ -1,4 +1,4 @@
-use watch_rs::frames::{FrameMeta, SCENE_MIN_FRAMES, KEYFRAME_MIN};
+use watch2::frames::{FrameMeta, SCENE_MIN_FRAMES, KEYFRAME_MIN};
 
 #[test]
 fn test_scene_min_frames() {

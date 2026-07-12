@@ -1,4 +1,4 @@
-use watch_rs::config::{suggest_subtitle_language, get_language_name};
+use watch2::config::{suggest_subtitle_language, get_language_name};
 
 #[test]
 fn test_get_language_name_indonesian() {

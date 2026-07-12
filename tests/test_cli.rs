@@ -1,5 +1,5 @@
 use clap::Parser;
-use watch_rs::cli::{Cli, OutputFormat};
+use watch2::cli::{Cli, OutputFormat};
 
 #[test]
 fn test_parse_basic_url() {

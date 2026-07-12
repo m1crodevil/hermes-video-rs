@@ -1,4 +1,4 @@
-use watch_rs::download::VideoInfo;
+use watch2::download::VideoInfo;
 
 #[test]
 fn test_video_info_default() {

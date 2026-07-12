@@ -34,7 +34,7 @@ pub async fn transcribe_groq(audio_path: &Path, api_key: &str) -> Result<Vec<Tra
                     .and_then(|v| v.to_str().ok())
                     .and_then(|v| v.parse::<u64>().ok())
                     .unwrap_or_else(|| (2u64).pow(attempt));
-                eprintln!("[watch-rs] rate limited by Groq API, retrying in {}s (attempt {}/{})...", retry_after, attempt + 1, max_retries);
+                eprintln!("[watch2] rate limited by Groq API, retrying in {}s (attempt {}/{})...", retry_after, attempt + 1, max_retries);
                 tokio::time::sleep(Duration::from_secs(retry_after)).await;
                 continue;
             }
@@ -99,7 +99,7 @@ pub async fn transcribe_openai(audio_path: &Path, api_key: &str) -> Result<Vec<T
                     .and_then(|v| v.to_str().ok())
                     .and_then(|v| v.parse::<u64>().ok())
                     .unwrap_or_else(|| (2u64).pow(attempt));
-                eprintln!("[watch-rs] rate limited by OpenAI API, retrying in {}s (attempt {}/{})...", retry_after, attempt + 1, max_retries);
+                eprintln!("[watch2] rate limited by OpenAI API, retrying in {}s (attempt {}/{})...", retry_after, attempt + 1, max_retries);
                 tokio::time::sleep(Duration::from_secs(retry_after)).await;
                 continue;
             }

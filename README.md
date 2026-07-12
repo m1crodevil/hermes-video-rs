@@ -18,7 +18,7 @@
 git clone https://github.com/m1crodevil/hermes-video-rs
 cd hermes-video-rs
 cargo build --release
-cp target/release/watch-rs /usr/local/bin/
+cp target/release/watch2 /usr/local/bin/
 
 # Or via Hermes skill
 hermes skill add hermes-video-rs
@@ -28,22 +28,22 @@ hermes skill add hermes-video-rs
 
 ```bash
 # Analyze a YouTube video
-watch-rs "https://youtu.be/abc123"
+watch2 "https://youtu.be/abc123"
 
 # Local file
-watch-rs ~/Videos/recording.mp4
+watch2 ~/Videos/recording.mp4
 
 # Detail modes
-watch-rs "https://youtu.be/abc" --detail transcript    # No frames
-watch-rs "https://youtu.be/abc" --detail efficient     # Keyframes, cap 50
-watch-rs "https://youtu.be/abc" --detail balanced      # Scene-aware, cap 100
-watch-rs "https://youtu.be/abc" --detail token-burner  # Uncapped
+watch2 "https://youtu.be/abc" --detail transcript    # No frames
+watch2 "https://youtu.be/abc" --detail efficient     # Keyframes, cap 50
+watch2 "https://youtu.be/abc" --detail balanced      # Scene-aware, cap 100
+watch2 "https://youtu.be/abc" --detail token-burner  # Uncapped
 
 # Focus on a section
-watch-rs "https://youtu.be/abc" --start 0:30 --end 1:00
+watch2 "https://youtu.be/abc" --start 0:30 --end 1:00
 
 # Force Whisper backend
-watch-rs "https://youtu.be/abc" --whisper groq
+watch2 "https://youtu.be/abc" --whisper groq
 ```
 
 ## CLI Options
@@ -76,7 +76,7 @@ SETUP_COMPLETE=true
 ## Architecture
 
 ```
-watch-rs/
+watch2/
 ├── src/
 │   ├── main.rs           # Pipeline orchestrator
 │   ├── cli.rs            # clap CLI definition

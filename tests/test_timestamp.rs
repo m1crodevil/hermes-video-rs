@@ -1,4 +1,4 @@
-use watch_rs::timestamp::{parse_time, format_time};
+use watch2::timestamp::{parse_time, format_time};
 
 #[test]
 fn test_parse_seconds() {
