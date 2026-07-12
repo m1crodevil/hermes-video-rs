@@ -7,7 +7,7 @@ pub fn detect_scene_changes(video_path: &Path) -> Result<Vec<f64>> {
     let output = std::process::Command::new("ffmpeg")
         .args([
             "-i", video_path.to_str().unwrap(),
-            "-vf", "select='gt(scene,0.20)',showinfo",
+            "-vf", "select='eq(n\\,0)+gt(scene\\,0.20)',showinfo",
             "-vsync", "vfr",
             "-f", "null",
             "-",

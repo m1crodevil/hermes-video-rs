@@ -50,6 +50,14 @@ pub struct Cli {
     /// Disable near-duplicate frame removal
     #[arg(long)]
     pub no_dedup: bool,
+
+    /// Output format: markdown, json, or both
+    #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
+    pub output: OutputFormat,
+
+    /// Keep downloaded video after processing
+    #[arg(long)]
+    pub keep_video: bool,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -75,4 +83,21 @@ impl std::fmt::Display for DetailMode {
 pub enum WhisperBackend {
     Groq,
     Openai,
+}
+
+#[derive(Clone, Debug, PartialEq, ValueEnum)]
+pub enum OutputFormat {
+    Markdown,
+    Json,
+    Both,
+}
+
+impl std::fmt::Display for OutputFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Markdown => write!(f, "markdown"),
+            Self::Json => write!(f, "json"),
+            Self::Both => write!(f, "both"),
+        }
+    }
 }

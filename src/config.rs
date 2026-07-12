@@ -1,5 +1,62 @@
 use std::path::PathBuf;
 
+/// Common language codes mapped to human-readable names.
+pub const LANGUAGE_NAMES: &[(&str, &str)] = &[
+    ("id", "Indonesian"), ("en", "English"), ("ms", "Malay"),
+    ("jv", "Javanese"), ("su", "Sundanese"), ("ar", "Arabic"),
+    ("zh", "Chinese"), ("ja", "Japanese"), ("ko", "Korean"),
+    ("es", "Spanish"), ("pt", "Portuguese"), ("fr", "French"),
+    ("de", "German"), ("it", "Italian"), ("ru", "Russian"),
+    ("hi", "Hindi"), ("th", "Thai"), ("vi", "Vietnamese"),
+    ("tl", "Filipino"), ("tr", "Turkish"), ("pl", "Polish"),
+    ("nl", "Dutch"), ("sv", "Swedish"), ("da", "Danish"),
+    ("no", "Norwegian"), ("fi", "Finnish"),
+];
+
+/// Get human-readable language name from a 2-letter code.
+pub fn get_language_name(code: &str) -> &str {
+    LANGUAGE_NAMES
+        .iter()
+        .find(|(c, _)| *c == code)
+        .map(|(_, name)| *name)
+        .unwrap_or("Unknown")
+}
+
+/// Suggest the best subtitle language based on video language and available subtitles.
+///
+/// Priority:
+/// 1. Manual subs in the video's language
+/// 2. Auto-generated subs in the video's language
+/// 3. Manual English subs
+/// 4. Auto-generated English subs
+/// 5. Video language as fallback (will trigger Whisper)
+pub fn suggest_subtitle_language(
+    video_language: Option<&str>,
+    available_manual: &[String],
+    available_auto: &[String],
+) -> String {
+    let vid_lang = video_language.unwrap_or("en");
+
+    // 1. Manual subs in video language
+    if available_manual.iter().any(|l| l == vid_lang) {
+        return vid_lang.to_string();
+    }
+    // 2. Auto subs in video language
+    if available_auto.iter().any(|l| l == vid_lang) {
+        return vid_lang.to_string();
+    }
+    // 3. Manual English
+    if available_manual.iter().any(|l| l == "en") {
+        return "en".to_string();
+    }
+    // 4. Auto English
+    if available_auto.iter().any(|l| l == "en") {
+        return "en".to_string();
+    }
+    // 5. Video language (fallback — will try Whisper)
+    vid_lang.to_string()
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum DetailMode {
     Transcript,

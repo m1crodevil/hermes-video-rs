@@ -1,17 +1,21 @@
 use crate::timestamp::format_time;
+use serde::Serialize;
 
+#[derive(Serialize, Clone)]
 pub struct FrameInfo {
     pub path: String,
     pub timestamp: f64,
     pub reason: String,
 }
 
+#[derive(Serialize, Clone)]
 pub struct TranscriptSegment {
     pub start: f64,
     pub end: f64,
     pub text: String,
 }
 
+#[derive(Serialize)]
 pub struct WatchReport {
     pub title: String,
     pub source: String,
@@ -22,6 +26,8 @@ pub struct WatchReport {
     pub transcript_source: String,
     pub duration: f64,
     pub working_dir: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 impl WatchReport {
@@ -50,7 +56,18 @@ impl WatchReport {
         if self.frames.is_empty() && self.transcript.is_empty() {
             out.push_str("*No frames or transcript available.*\n");
         }
+        if !self.warnings.is_empty() {
+            out.push_str("## Warnings\n\n");
+            for w in &self.warnings {
+                out.push_str(&format!("- ⚠️ {}\n", w));
+            }
+            out.push('\n');
+        }
         out
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap_or_default()
     }
 }
 
@@ -63,6 +80,7 @@ mod tests {
             title: "Test".into(), source: "test.mp4".into(), detail: "balanced".into(),
             frames: vec![], frames_dropped: 0, transcript: vec![],
             transcript_source: "none".into(), duration: 60.0, working_dir: "/tmp/test".into(),
+            warnings: vec![],
         };
         let md = report.to_markdown();
         assert!(md.contains("# Test"));
