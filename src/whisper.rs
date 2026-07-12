@@ -53,12 +53,14 @@ pub async fn transcribe_groq(audio_path: &Path, api_key: &str) -> Result<Vec<Tra
                 start: seg["start"].as_f64()?,
                 end: seg["end"].as_f64()?,
                 text: seg["text"].as_str()?.to_string(),
+                words: None,
             })).collect());
         } else {
             return Ok(vec![TranscriptSegment {
                 start: 0.0,
                 end: 0.0,
                 text: json["text"].as_str().unwrap_or("").to_string(),
+                words: None,
             }]);
         }
     }
@@ -116,12 +118,14 @@ pub async fn transcribe_openai(audio_path: &Path, api_key: &str) -> Result<Vec<T
                 start: seg["start"].as_f64()?,
                 end: seg["end"].as_f64()?,
                 text: seg["text"].as_str()?.to_string(),
+                words: None,
             })).collect());
         } else {
             return Ok(vec![TranscriptSegment {
                 start: 0.0,
                 end: 0.0,
                 text: json["text"].as_str().unwrap_or("").to_string(),
+                words: None,
             }]);
         }
     }

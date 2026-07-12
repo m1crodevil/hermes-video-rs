@@ -22,10 +22,28 @@ pub fn parse_json3(content: &str) -> Result<Vec<TranscriptSegment>> {
         }
         let start_ms = event["tStartMs"].as_f64().unwrap_or(0.0);
         let dur_ms = event["dDurationMs"].as_f64().unwrap_or(0.0);
+        
+        // Extract word-level timing from segs
+        let words: Vec<crate::output::WordTiming> = segs
+            .iter()
+            .filter_map(|s| {
+                let utf8 = s["utf8"].as_str()?.trim();
+                if utf8.is_empty() { return None; }
+                let offset_ms = s["tOffsetMs"].as_f64().unwrap_or(0.0);
+                let confidence = s["acAsrConf"].as_i64().unwrap_or(0) as i32;
+                Some(crate::output::WordTiming {
+                    word: utf8.to_string(),
+                    start: ((start_ms + offset_ms) / 1000.0 * 1000.0).round() / 1000.0,
+                    confidence,
+                })
+            })
+            .collect();
+        
         segments.push(TranscriptSegment {
             start: start_ms / 1000.0,
             end: (start_ms + dur_ms) / 1000.0,
             text,
+            words: if words.is_empty() { None } else { Some(words) },
         });
     }
     Ok(dedupe(segments))
@@ -58,7 +76,7 @@ pub fn parse_vtt(content: &str) -> Result<Vec<TranscriptSegment>> {
                     text.push_str(next.trim());
                 }
                 if !text.is_empty() {
-                    segments.push(TranscriptSegment { start, end, text });
+                    segments.push(TranscriptSegment { start, end, text, words: None });
                 }
             }
         }

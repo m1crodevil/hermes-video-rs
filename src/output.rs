@@ -9,10 +9,19 @@ pub struct FrameInfo {
 }
 
 #[derive(Serialize, Clone)]
+pub struct WordTiming {
+    pub word: String,
+    pub start: f64,
+    pub confidence: i32,
+}
+
+#[derive(Serialize, Clone)]
 pub struct TranscriptSegment {
     pub start: f64,
     pub end: f64,
     pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub words: Option<Vec<WordTiming>>,
 }
 
 #[derive(Serialize)]

@@ -38,11 +38,13 @@ fn make_full_report() -> WatchReport {
                 start: 0.0,
                 end: 3.0,
                 text: "Hello world".into(),
+                words: None,
             },
             TranscriptSegment {
                 start: 3.0,
                 end: 6.0,
                 text: "Second segment".into(),
+                words: None,
             },
         ],
         transcript_source: "groq".into(),
