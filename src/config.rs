@@ -1,5 +1,17 @@
 use std::path::PathBuf;
 
+/// Whitelist of valid language codes accepted by this tool.
+pub const VALID_LANG_CODES: &[&str] = &[
+    "en", "id", "ms", "jv", "su", "ar", "zh", "ja", "ko", "es", "pt",
+    "fr", "de", "it", "ru", "hi", "th", "vi", "tl", "tr", "pl", "nl",
+    "sv", "da", "no", "fi",
+];
+
+/// Check if a language code is in the valid whitelist.
+pub fn is_valid_lang(code: &str) -> bool {
+    VALID_LANG_CODES.contains(&code)
+}
+
 /// Common language codes mapped to human-readable names.
 pub const LANGUAGE_NAMES: &[(&str, &str)] = &[
     ("id", "Indonesian"), ("en", "English"), ("ms", "Malay"),
@@ -90,6 +102,22 @@ pub struct WatchConfig {
     pub config_dir: PathBuf,
 }
 
+/// Patterns that indicate a placeholder/unset API key.
+const PLACEHOLDER_PATTERNS: &[&str] = &[
+    "your_", "your-", "changeme", "sk-your",
+];
+const VALID_NON_PLACEHOLDERS: &[&str] = &["true", "false", "yes", "no"];
+
+/// Detect placeholder API key values that haven't been replaced with real keys.
+pub fn is_placeholder(value: &str) -> bool {
+    let stripped = value.trim().to_lowercase();
+    if stripped.is_empty() { return true; }
+    if VALID_NON_PLACEHOLDERS.contains(&stripped.as_str()) { return false; }
+    if PLACEHOLDER_PATTERNS.iter().any(|p| stripped.starts_with(&p.to_lowercase())) { return true; }
+    if stripped.len() < 12 && !stripped.contains(' ') { return true; }
+    false
+}
+
 impl WatchConfig {
     pub fn from_env() -> Self {
         let home = dirs::home_dir().unwrap_or_default();
@@ -105,10 +133,12 @@ impl WatchConfig {
         };
         Self {
             detail,
-            groq_api_key: std::env::var("GROQ_API_KEY").ok().filter(|s| !s.is_empty()),
+            groq_api_key: std::env::var("GROQ_API_KEY")
+                .ok()
+                .filter(|s| !s.is_empty() && !is_placeholder(s)),
             openai_api_key: std::env::var("OPENAI_API_KEY")
                 .ok()
-                .filter(|s| !s.is_empty()),
+                .filter(|s| !s.is_empty() && !is_placeholder(s)),
             config_dir,
         }
     }

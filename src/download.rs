@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use crate::error::{WatchError, Result};
-use crate::config::{suggest_subtitle_language, get_language_name};
+use crate::config::{suggest_subtitle_language, get_language_name, is_valid_lang};
 
 /// Rich metadata extracted from a video's info.json sidecar file.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -80,6 +80,10 @@ pub fn ytdlp_network_opts(use_cookies: bool) -> Vec<String> {
         opts.extend(["--impersonate".into(), "chrome".into()]);
     }
 
+    // Custom User-Agent for yt-dlp to avoid bot detection
+    opts.push("--user-agent".to_string());
+    opts.push("hermes-video-rs/4.1".to_string());
+
     // Chrome cookies for authenticated sessions (opt-in only — breaks android_vr)
     if use_cookies && has_chrome_cookies() {
         opts.extend(["--cookies-from-browser".into(), "chrome".into()]);
@@ -93,12 +97,18 @@ pub fn ytdlp_network_opts(use_cookies: bool) -> Vec<String> {
 // URL / local helpers
 // ---------------------------------------------------------------------------
 
+/// Strip control characters from URL before passing to subprocess.
+pub fn sanitize_url(url: &str) -> String {
+    url.chars().filter(|c| !c.is_control()).collect()
+}
+
 pub fn is_url(source: &str) -> bool {
     source.starts_with("http://") || source.starts_with("https://")
 }
 
 pub fn resolve_local(path: &str) -> Result<DownloadResult> {
-    let p = Path::new(path)
+    let path = sanitize_url(path);
+    let p = Path::new(&path)
         .canonicalize()
         .map_err(|e| WatchError::Download(format!("File not found or not accessible '{}': {}", path, e)))?;
 
@@ -211,6 +221,7 @@ fn list_available_subtitles(url: &str, use_cookies: bool) -> (Vec<String>, Vec<S
 }
 
 pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool) -> Result<DownloadResult> {
+    let url = sanitize_url(url);
     std::fs::create_dir_all(out_dir)?;
     let output_template = out_dir.join("video.%(ext)s").to_string_lossy().to_string();
 
@@ -227,19 +238,22 @@ pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool) -> Result<Do
         "--no-playlist",
         "--ignore-errors",
         "-o", &output_template,
-        "--", url,
+        "--", &url,
     ]);
     let _ = Command::new("yt-dlp").args(&meta_args).status();
 
     let info = extract_info(out_dir);
 
     // --- Detect best subtitle language ---
-    let (manual_subs, auto_subs) = list_available_subtitles(url, use_cookies);
+    let (manual_subs, auto_subs) = list_available_subtitles(&url, use_cookies);
     let detected_lang = suggest_subtitle_language(
         info.language.as_deref(),
         &manual_subs,
         &auto_subs,
     );
+    if !is_valid_lang(&detected_lang) {
+        eprintln!("[watch2] detected lang '{}' not in whitelist, falling back to en", detected_lang);
+    }
     let lang_pattern = subtitle_lang_pattern(&detected_lang);
     let lang_name = get_language_name(&detected_lang);
     eprintln!(
@@ -263,7 +277,7 @@ pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool) -> Result<Do
         "--ignore-errors",
         "--sleep-subtitles", "3",
         "-o", &output_template,
-        "--", url,
+        "--", &url,
     ]);
 
     let status = Command::new("yt-dlp")
@@ -293,6 +307,7 @@ pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool) -> Result<Do
 // ---------------------------------------------------------------------------
 
 pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool) -> Result<DownloadResult> {
+    let url = sanitize_url(url);
     std::fs::create_dir_all(out_dir)?;
     let output_template = out_dir.join("video.%(ext)s").to_string_lossy().to_string();
 
@@ -314,19 +329,22 @@ pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool) -> Result<Do
         "--ignore-errors",
         "--sleep-subtitles", "3",
         "-o", &output_template,
-        "--", url,
+        "--", &url,
     ]);
     let _ = Command::new("yt-dlp").args(&meta_args).status();
 
     let info = extract_info(out_dir);
 
     // --- Detect best subtitle language ---
-    let (manual_subs, auto_subs) = list_available_subtitles(url, use_cookies);
+    let (manual_subs, auto_subs) = list_available_subtitles(&url, use_cookies);
     let detected_lang = suggest_subtitle_language(
         info.language.as_deref(),
         &manual_subs,
         &auto_subs,
     );
+    if !is_valid_lang(&detected_lang) {
+        eprintln!("[watch2] detected lang '{}' not in whitelist, falling back to en", detected_lang);
+    }
     let lang_pattern = subtitle_lang_pattern(&detected_lang);
     let lang_name = get_language_name(&detected_lang);
     eprintln!(
@@ -348,7 +366,7 @@ pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool) -> Result<Do
         "--ignore-errors",
         "--sleep-subtitles", "3",
         "-o", &output_template,
-        "--", url,
+        "--", &url,
     ]);
 
     let status = Command::new("yt-dlp")
