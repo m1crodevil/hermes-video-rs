@@ -23,6 +23,7 @@ tracing-subscriber = "0.3"
 chrono = "0.4"
 tempfile = "3"
 which = "7"
+regex = "1"
 
 [features]
 default = []

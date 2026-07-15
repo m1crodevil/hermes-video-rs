@@ -62,6 +62,26 @@ pub struct Cli {
     /// Use Chrome cookies for authenticated YouTube sessions (opt-in, breaks android_vr)
     #[arg(long)]
     pub cookies: bool,
+
+    /// Auto-generate moment detection prompt
+    #[arg(long)]
+    pub auto_moments: bool,
+
+    /// Maximum moments to detect
+    #[arg(long, default_value_t = 50)]
+    pub max_moments: u32,
+
+    /// Minimum moments to detect
+    #[arg(long)]
+    pub min_moments: Option<u32>,
+
+    /// Show processing stats at the end
+    #[arg(long)]
+    pub stats: bool,
+
+    /// Stats display format: telegram (rich) or compact (single line)
+    #[arg(long, value_enum, default_value_t = StatsFormat::Telegram)]
+    pub stats_format: StatsFormat,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -104,6 +124,21 @@ impl std::fmt::Display for OutputFormat {
             Self::Markdown => write!(f, "markdown"),
             Self::Json => write!(f, "json"),
             Self::Both => write!(f, "both"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, ValueEnum)]
+pub enum StatsFormat {
+    Telegram,
+    Compact,
+}
+
+impl std::fmt::Display for StatsFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Telegram => write!(f, "telegram"),
+            Self::Compact => write!(f, "compact"),
         }
     }
 }

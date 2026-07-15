@@ -14,6 +14,7 @@ use std::path::PathBuf;
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
+    let start_time = std::time::Instant::now();
     let cli = cli::Cli::parse();
     let config = WatchConfig::from_env();
 
@@ -309,6 +310,31 @@ async fn main() -> anyhow::Result<()> {
     ) {
         transcript_segments.retain(|s| s.end >= start && s.start <= end);
     }
+    // Step 6b: Auto-moments — generate prompt for agent
+    if cli.auto_moments && !transcript_segments.is_empty() {
+        let transcript_text = watch2::moments::format_transcript_for_analysis(&transcript_segments);
+        let prompt = watch2::moments::generate_prompt(
+            &transcript_text,
+            &dl_result.info.title,
+            dl_result.info.uploader.as_deref().unwrap_or("Unknown"),
+            dl_result.info.duration.unwrap_or(0.0),
+            cli.max_moments,
+            cli.min_moments,
+        );
+        let prompt_path = work.join("moments_prompt.txt");
+        std::fs::write(&prompt_path, &prompt)?;
+        eprintln!("[watch2] Moments prompt written to {}", prompt_path.display());
+    }
+    // Load existing key_moments.json if present
+    let moments_path = work.join("key_moments.json");
+    if moments_path.exists() {
+        if let Ok(data) = std::fs::read_to_string(&moments_path) {
+            if let Ok(moments) = serde_json::from_str::<Vec<watch2::moments::KeyMoment>>(&data) {
+                eprintln!("[watch2] Loaded {} key moments", moments.len());
+                // Use timestamps for cue frame extraction
+            }
+        }
+    }
 
     // Step 7: Cleanup downloaded video
     if !cli.keep_video {
@@ -394,6 +420,17 @@ async fn main() -> anyhow::Result<()> {
                 Err(e) => eprintln!("[watch2] failed to write JSON: {}", e),
             }
         }
+    }
+
+    // Step 8: Show stats if requested
+    if cli.stats {
+        let processing_time = start_time.elapsed().as_secs_f64();
+        let stats = watch2::stats::collect_stats(&work, processing_time);
+        let stats_output = match cli.stats_format {
+            cli::StatsFormat::Compact => watch2::stats::format_stats_compact(&stats),
+            cli::StatsFormat::Telegram => watch2::stats::format_stats_telegram(&stats),
+        };
+        eprintln!("\n{}", stats_output);
     }
 
     Ok(())
