@@ -58,6 +58,10 @@ pub struct Cli {
     /// Keep downloaded video after processing
     #[arg(long)]
     pub keep_video: bool,
+
+    /// Use Chrome cookies for authenticated YouTube sessions (opt-in, breaks android_vr)
+    #[arg(long)]
+    pub cookies: bool,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -66,6 +70,7 @@ pub enum DetailMode {
     Efficient,
     Balanced,
     TokenBurner,
+    ScreenshotFirst,
 }
 
 impl std::fmt::Display for DetailMode {
@@ -75,6 +80,7 @@ impl std::fmt::Display for DetailMode {
             DetailMode::Efficient => write!(f, "efficient"),
             DetailMode::Balanced => write!(f, "balanced"),
             DetailMode::TokenBurner => write!(f, "token-burner"),
+            DetailMode::ScreenshotFirst => write!(f, "screenshot-first"),
         }
     }
 }

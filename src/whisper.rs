@@ -3,11 +3,16 @@ use std::time::Duration;
 use crate::error::{WatchError, Result};
 use crate::output::TranscriptSegment;
 
+const RETRY_BASE_DELAY: f64 = 2.0;
+
 pub async fn transcribe_groq(audio_path: &Path, api_key: &str) -> Result<Vec<TranscriptSegment>> {
     let audio_bytes = std::fs::read(audio_path)
         .map_err(|e| WatchError::Whisper(format!("Failed to read audio '{}': {}", audio_path.display(), e)))?;
-    let client = reqwest::Client::new();
-    let max_retries = 3u32;
+    let client = reqwest::Client::builder()
+        .user_agent("hermes-video-rs/3.2")
+        .build()
+        .map_err(|e| WatchError::Whisper(format!("Failed to create HTTP client: {}", e)))?;
+    let max_retries = 4u32;
 
     for attempt in 0..=max_retries {
         let part = reqwest::multipart::Part::bytes(audio_bytes.clone())
@@ -30,12 +35,16 @@ pub async fn transcribe_groq(audio_path: &Path, api_key: &str) -> Result<Vec<Tra
         // Handle rate limiting (HTTP 429) with exponential backoff
         if resp.status().as_u16() == 429 {
             if attempt < max_retries {
-                let retry_after = resp.headers().get("retry-after")
+                let delay = resp.headers()
+                    .get("retry-after")
                     .and_then(|v| v.to_str().ok())
                     .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or_else(|| (2u64).pow(attempt));
-                eprintln!("[watch2] rate limited by Groq API, retrying in {}s (attempt {}/{})...", retry_after, attempt + 1, max_retries);
-                tokio::time::sleep(Duration::from_secs(retry_after)).await;
+                    .map(Duration::from_secs)
+                    .unwrap_or_else(|| {
+                        Duration::from_secs((RETRY_BASE_DELAY * 2f64.powi(attempt as i32)) as u64)
+                    });
+                eprintln!("[watch2] rate limited by Groq API, retrying in {}s (attempt {}/{})...", delay.as_secs(), attempt + 1, max_retries);
+                tokio::time::sleep(delay).await;
                 continue;
             }
             return Err(WatchError::Whisper(format!("Groq API rate limit exceeded after {} retries", max_retries)));
@@ -71,8 +80,11 @@ pub async fn transcribe_groq(audio_path: &Path, api_key: &str) -> Result<Vec<Tra
 pub async fn transcribe_openai(audio_path: &Path, api_key: &str) -> Result<Vec<TranscriptSegment>> {
     let audio_bytes = std::fs::read(audio_path)
         .map_err(|e| WatchError::Whisper(format!("Failed to read audio '{}': {}", audio_path.display(), e)))?;
-    let client = reqwest::Client::new();
-    let max_retries = 3u32;
+    let client = reqwest::Client::builder()
+        .user_agent("hermes-video-rs/3.2")
+        .build()
+        .map_err(|e| WatchError::Whisper(format!("Failed to create HTTP client: {}", e)))?;
+    let max_retries = 4u32;
 
     for attempt in 0..=max_retries {
         let part = reqwest::multipart::Part::bytes(audio_bytes.clone())
@@ -95,12 +107,16 @@ pub async fn transcribe_openai(audio_path: &Path, api_key: &str) -> Result<Vec<T
         // Handle rate limiting (HTTP 429) with exponential backoff
         if resp.status().as_u16() == 429 {
             if attempt < max_retries {
-                let retry_after = resp.headers().get("retry-after")
+                let delay = resp.headers()
+                    .get("retry-after")
                     .and_then(|v| v.to_str().ok())
                     .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or_else(|| (2u64).pow(attempt));
-                eprintln!("[watch2] rate limited by OpenAI API, retrying in {}s (attempt {}/{})...", retry_after, attempt + 1, max_retries);
-                tokio::time::sleep(Duration::from_secs(retry_after)).await;
+                    .map(Duration::from_secs)
+                    .unwrap_or_else(|| {
+                        Duration::from_secs((RETRY_BASE_DELAY * 2f64.powi(attempt as i32)) as u64)
+                    });
+                eprintln!("[watch2] rate limited by OpenAI API, retrying in {}s (attempt {}/{})...", delay.as_secs(), attempt + 1, max_retries);
+                tokio::time::sleep(delay).await;
                 continue;
             }
             return Err(WatchError::Whisper(format!("OpenAI API rate limit exceeded after {} retries", max_retries)));

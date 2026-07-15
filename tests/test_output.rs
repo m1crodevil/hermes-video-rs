@@ -5,6 +5,9 @@ fn make_test_report() -> WatchReport {
         title: "Test Video".into(),
         source: "test.mp4".into(),
         detail: "balanced".into(),
+        uploader: None,
+        language: None,
+        engine: Some("scene-or-uniform".into()),
         frames: vec![],
         frames_dropped: 0,
         transcript: vec![],
@@ -20,6 +23,9 @@ fn make_full_report() -> WatchReport {
         title: "Full Video".into(),
         source: "https://youtu.be/abc".into(),
         detail: "token-burner".into(),
+        uploader: Some("TestChannel".into()),
+        language: Some("en".into()),
+        engine: Some("two-pass".into()),
         frames: vec![
             FrameInfo {
                 path: "/tmp/frame_0001.jpg".into(),
@@ -182,4 +188,33 @@ fn test_json_has_all_metadata() {
     assert_eq!(parsed["duration"], 60.0);
     assert_eq!(parsed["working_dir"], "/tmp/test");
     assert_eq!(parsed["transcript_source"], "none");
+}
+
+#[test]
+fn test_markdown_metadata_fields() {
+    let report = make_full_report();
+    let md = report.to_markdown();
+    assert!(md.contains("**Uploader:** TestChannel"));
+    assert!(md.contains("**Language:** en"));
+    assert!(md.contains("**Engine:** two-pass"));
+}
+
+#[test]
+fn test_json_metadata_fields() {
+    let report = make_full_report();
+    let json = report.to_json();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["uploader"], "TestChannel");
+    assert_eq!(parsed["language"], "en");
+    assert_eq!(parsed["engine"], "two-pass");
+}
+
+#[test]
+fn test_metadata_skipped_when_none() {
+    let report = make_test_report();
+    let json = report.to_json();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    // uploader and language are None → should be absent
+    assert!(parsed.get("uploader").is_none());
+    assert!(parsed.get("language").is_none());
 }

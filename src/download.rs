@@ -57,7 +57,7 @@ fn has_chrome_cookies() -> bool {
 ///
 /// Without these, metadata + subtitles may still work but video downloads
 /// fail with HTTP 403 Forbidden.
-pub fn ytdlp_network_opts() -> Vec<String> {
+pub fn ytdlp_network_opts(use_cookies: bool) -> Vec<String> {
     let mut opts = Vec::new();
     let home = dirs::home_dir().unwrap_or_default();
 
@@ -80,9 +80,10 @@ pub fn ytdlp_network_opts() -> Vec<String> {
         opts.extend(["--impersonate".into(), "chrome".into()]);
     }
 
-    // Chrome cookies for authenticated sessions (only when deno is present)
-    if has_deno && has_chrome_cookies() {
+    // Chrome cookies for authenticated sessions (opt-in only — breaks android_vr)
+    if use_cookies && has_chrome_cookies() {
         opts.extend(["--cookies-from-browser".into(), "chrome".into()]);
+        opts.extend(["--extractor-args".into(), "youtube:player_client=web".into()]);
     }
 
     opts
@@ -154,12 +155,12 @@ fn subtitle_lang_pattern(lang: &str) -> String {
 /// Run `yt-dlp --list-subs` and parse available manual/auto subtitle languages.
 ///
 /// Returns `(manual: Vec<String>, auto: Vec<String>)` of language codes.
-fn list_available_subtitles(url: &str) -> (Vec<String>, Vec<String>) {
+fn list_available_subtitles(url: &str, use_cookies: bool) -> (Vec<String>, Vec<String>) {
     let mut cmd = Command::new("yt-dlp");
     let mut args: Vec<&str> = vec!["--skip-download", "--list-subs", "--no-playlist"];
 
     // Apply network opts for YouTube reliability
-    let network_opts = ytdlp_network_opts();
+    let network_opts = ytdlp_network_opts(use_cookies);
     for opt in &network_opts {
         args.push(opt.as_str());
     }
@@ -209,11 +210,11 @@ fn list_available_subtitles(url: &str) -> (Vec<String>, Vec<String>) {
     (manual, auto)
 }
 
-pub fn fetch_captions(url: &str, out_dir: &Path) -> Result<DownloadResult> {
+pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool) -> Result<DownloadResult> {
     std::fs::create_dir_all(out_dir)?;
     let output_template = out_dir.join("video.%(ext)s").to_string_lossy().to_string();
 
-    let network_opts = ytdlp_network_opts();
+    let network_opts = ytdlp_network_opts(use_cookies);
 
     // --- First pass: fetch metadata only (for language detection) ---
     let mut meta_args: Vec<&str> = Vec::new();
@@ -233,7 +234,7 @@ pub fn fetch_captions(url: &str, out_dir: &Path) -> Result<DownloadResult> {
     let info = extract_info(out_dir);
 
     // --- Detect best subtitle language ---
-    let (manual_subs, auto_subs) = list_available_subtitles(url);
+    let (manual_subs, auto_subs) = list_available_subtitles(url, use_cookies);
     let detected_lang = suggest_subtitle_language(
         info.language.as_deref(),
         &manual_subs,
@@ -291,11 +292,11 @@ pub fn fetch_captions(url: &str, out_dir: &Path) -> Result<DownloadResult> {
 // download_video — full download with subtitles, YouTube 2026 opts
 // ---------------------------------------------------------------------------
 
-pub fn download_video(url: &str, out_dir: &Path) -> Result<DownloadResult> {
+pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool) -> Result<DownloadResult> {
     std::fs::create_dir_all(out_dir)?;
     let output_template = out_dir.join("video.%(ext)s").to_string_lossy().to_string();
 
-    let network_opts = ytdlp_network_opts();
+    let network_opts = ytdlp_network_opts(use_cookies);
 
     // --- First pass: fetch metadata + subtitles for language detection ---
     let mut meta_args: Vec<&str> = Vec::new();
@@ -320,7 +321,7 @@ pub fn download_video(url: &str, out_dir: &Path) -> Result<DownloadResult> {
     let info = extract_info(out_dir);
 
     // --- Detect best subtitle language ---
-    let (manual_subs, auto_subs) = list_available_subtitles(url);
+    let (manual_subs, auto_subs) = list_available_subtitles(url, use_cookies);
     let detected_lang = suggest_subtitle_language(
         info.language.as_deref(),
         &manual_subs,

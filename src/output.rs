@@ -29,6 +29,12 @@ pub struct WatchReport {
     pub title: String,
     pub source: String,
     pub detail: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uploader: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
     pub frames: Vec<FrameInfo>,
     pub frames_dropped: u32,
     pub transcript: Vec<TranscriptSegment>,
@@ -45,6 +51,18 @@ impl WatchReport {
         out.push_str(&format!("# {}\n\n", self.title));
         out.push_str(&format!("**Source:** {} | **Detail:** {} | **Duration:** {}\n\n",
             self.source, self.detail, format_time(self.duration)));
+        if let Some(ref u) = self.uploader {
+            out.push_str(&format!("**Uploader:** {}\n", u));
+        }
+        if let Some(ref l) = self.language {
+            out.push_str(&format!("**Language:** {}\n", l));
+        }
+        if let Some(ref e) = self.engine {
+            out.push_str(&format!("**Engine:** {}\n", e));
+        }
+        if self.uploader.is_some() || self.language.is_some() || self.engine.is_some() {
+            out.push('\n');
+        }
         if !self.frames.is_empty() {
             out.push_str(&format!("## Frames ({} total, {} dropped)\n\n",
                 self.frames.len(), self.frames_dropped));
@@ -87,6 +105,9 @@ mod tests {
     fn test_empty_report() {
         let report = WatchReport {
             title: "Test".into(), source: "test.mp4".into(), detail: "balanced".into(),
+            uploader: Some("TestChannel".into()),
+            language: Some("en".into()),
+            engine: Some("scene-or-uniform".into()),
             frames: vec![], frames_dropped: 0, transcript: vec![],
             transcript_source: "none".into(), duration: 60.0, working_dir: "/tmp/test".into(),
             warnings: vec![],
@@ -94,5 +115,8 @@ mod tests {
         let md = report.to_markdown();
         assert!(md.contains("# Test"));
         assert!(md.contains("No frames or transcript available"));
+        assert!(md.contains("**Uploader:** TestChannel"));
+        assert!(md.contains("**Language:** en"));
+        assert!(md.contains("**Engine:** scene-or-uniform"));
     }
 }

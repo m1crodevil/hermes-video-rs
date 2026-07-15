@@ -63,6 +63,7 @@ pub enum DetailMode {
     Efficient,
     Balanced,
     TokenBurner,
+    ScreenshotFirst,
 }
 impl Default for DetailMode {
     fn default() -> Self {
@@ -76,6 +77,7 @@ impl std::fmt::Display for DetailMode {
             Self::Efficient => write!(f, "efficient"),
             Self::Balanced => write!(f, "balanced"),
             Self::TokenBurner => write!(f, "token-burner"),
+            Self::ScreenshotFirst => write!(f, "screenshot-first"),
         }
     }
 }
@@ -98,6 +100,7 @@ impl WatchConfig {
             "transcript" => DetailMode::Transcript,
             "efficient" => DetailMode::Efficient,
             "token-burner" => DetailMode::TokenBurner,
+            "screenshot-first" => DetailMode::ScreenshotFirst,
             _ => DetailMode::Balanced,
         };
         Self {
@@ -115,6 +118,7 @@ impl WatchConfig {
             DetailMode::Efficient => Some(50),
             DetailMode::Balanced => Some(100),
             DetailMode::TokenBurner => None,
+            DetailMode::ScreenshotFirst => Some(100),
         }
     }
     pub fn has_whisper_key(&self) -> bool {

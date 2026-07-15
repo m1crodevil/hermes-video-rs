@@ -4,6 +4,7 @@ use watch2::config::{DetailMode, WatchConfig};
 use watch2::download;
 use watch2::frames;
 use watch2::output::{FrameInfo, WatchReport};
+use watch2::setup;
 use watch2::timestamp::parse_time;
 use watch2::transcript;
 use watch2::whisper;
@@ -16,12 +17,30 @@ async fn main() -> anyhow::Result<()> {
     let cli = cli::Cli::parse();
     let config = WatchConfig::from_env();
 
+    // Early preflight check
+    let setup_status = setup::check();
+    if !setup_status.can_proceed {
+        if !setup_status.missing_binaries.is_empty() {
+            eprintln!("❌ Missing required binaries: {}", setup_status.missing_binaries.join(", "));
+            eprintln!("   Install: apt install ffmpeg  (Linux)");
+        }
+        if !setup_status.has_api_key {
+            eprintln!("⚠️  No Whisper API key (GROQ_API_KEY or OPENAI_API_KEY)");
+            eprintln!("   Whisper fallback will be unavailable");
+        }
+        std::process::exit(3);
+    }
+    if setup_status.first_run {
+        eprintln!("ℹ️  First run detected");
+    }
+
     // Resolve detail mode
     let detail = cli.detail.as_ref().map(|d| match d {
         cli::DetailMode::Transcript => DetailMode::Transcript,
         cli::DetailMode::Efficient => DetailMode::Efficient,
         cli::DetailMode::Balanced => DetailMode::Balanced,
         cli::DetailMode::TokenBurner => DetailMode::TokenBurner,
+        cli::DetailMode::ScreenshotFirst => DetailMode::ScreenshotFirst,
     }).unwrap_or_else(|| config.detail.clone());
 
     // Frame cap
@@ -46,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
 
     if is_url {
         eprintln!("[watch2] fetching metadata/captions...");
-        dl_result = download::fetch_captions(&cli.source, &download_dir)?;
+        dl_result = download::fetch_captions(&cli.source, &download_dir, cli.cookies)?;
     } else {
         dl_result = download::resolve_local(&cli.source)?;
     }
@@ -106,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
         // Need to download if we don't have video yet
         if video_path.is_none() && is_url {
             eprintln!("[watch2] downloading video...");
-            dl_result = download::download_video(&cli.source, &download_dir)?;
+            dl_result = download::download_video(&cli.source, &download_dir, cli.cookies)?;
             video_path = dl_result.video_path;
 
             // Get metadata after download
@@ -190,6 +209,22 @@ async fn main() -> anyhow::Result<()> {
                         vp, &frames_dir, fps, max_frames, cli.resolution,
                         focus_start, focus_end, !cli.no_dedup,
                     )?
+                }
+                DetailMode::ScreenshotFirst => {
+                    if transcript_segments.is_empty() {
+                        eprintln!("[watch2] warning: no transcript for screenshot-first, falling back to uniform");
+                        frames::extract_scene_or_uniform(
+                            vp, &frames_dir, fps, max_frames, cli.resolution, max_frames,
+                            focus_start, focus_end, !cli.no_dedup,
+                        )?
+                    } else {
+                        let timestamps: Vec<f64> = transcript_segments.iter().map(|s| s.start).collect();
+                        eprintln!("[watch2] engine: screenshot-first ({} transcript segments)", timestamps.len());
+                        frames::extract_at_timestamps(
+                            vp, &frames_dir, &timestamps, cli.resolution,
+                            Some(max_frames), focus_start, focus_end,
+                        )?
+                    }
                 }
                 DetailMode::Transcript => {
                     // No frames — transcript-only mode
@@ -336,6 +371,9 @@ async fn main() -> anyhow::Result<()> {
         title,
         source: cli.source.clone(),
         detail: detail.to_string(),
+        uploader: dl_result.info.uploader.clone(),
+        language: dl_result.info.language.clone(),
+        engine: Some(frame_meta.engine.clone()),
         frames,
         frames_dropped,
         transcript: transcript_segments,
