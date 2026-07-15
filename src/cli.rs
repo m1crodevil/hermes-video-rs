@@ -84,9 +84,10 @@ pub struct Cli {
     pub stats_format: StatsFormat,
 }
 
-#[derive(Clone, Debug, ValueEnum)]
+#[derive(Clone, Debug, PartialEq, ValueEnum)]
 pub enum DetailMode {
     Transcript,
+    TranscriptMoments,
     Efficient,
     Balanced,
     TokenBurner,
@@ -97,6 +98,7 @@ impl std::fmt::Display for DetailMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DetailMode::Transcript => write!(f, "transcript"),
+            DetailMode::TranscriptMoments => write!(f, "transcript-moments"),
             DetailMode::Efficient => write!(f, "efficient"),
             DetailMode::Balanced => write!(f, "balanced"),
             DetailMode::TokenBurner => write!(f, "token-burner"),

@@ -9,6 +9,7 @@ use watch2::timestamp::parse_time;
 use watch2::transcript;
 use watch2::whisper;
 use std::path::PathBuf;
+use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -38,6 +39,7 @@ async fn main() -> anyhow::Result<()> {
     // Resolve detail mode
     let detail = cli.detail.as_ref().map(|d| match d {
         cli::DetailMode::Transcript => DetailMode::Transcript,
+        cli::DetailMode::TranscriptMoments => DetailMode::TranscriptMoments,
         cli::DetailMode::Efficient => DetailMode::Efficient,
         cli::DetailMode::Balanced => DetailMode::Balanced,
         cli::DetailMode::TokenBurner => DetailMode::TokenBurner,
@@ -91,6 +93,71 @@ async fn main() -> anyhow::Result<()> {
     let focus_end = cli.end.as_deref().and_then(|s| parse_time(Some(s)));
     if focus_start.is_some() || focus_end.is_some() {
         transcript_segments = transcript::filter_by_range(&transcript_segments, focus_start, focus_end);
+    }
+
+    // Phase 1: TranscriptMoments — first run (generate prompt and exit)
+    if detail == DetailMode::TranscriptMoments {
+        let moments_path = work.join("key_moments.json");
+        if !moments_path.exists() {
+            if transcript_segments.is_empty() {
+                eprintln!("[watch2] ⚠️  TranscriptMoments requires a transcript. No subtitles found — falling through.");
+            } else {
+                eprintln!("[watch2] Phase 1: Generating moment detection prompt...");
+                let transcript_text = watch2::moments::format_transcript_for_analysis(&transcript_segments);
+                let prompt = watch2::moments::generate_prompt(
+                    &transcript_text,
+                    &dl_result.info.title,
+                    dl_result.info.uploader.as_deref().unwrap_or("Unknown"),
+                    dl_result.info.duration.unwrap_or(0.0),
+                    cli.max_moments,
+                    cli.min_moments,
+                );
+                let prompt_path = work.join("moments_prompt.txt");
+                std::fs::write(&prompt_path, &prompt)?;
+                eprintln!("[watch2] ✅ Moment prompt written to {}", prompt_path.display());
+                eprintln!();
+                eprintln!("📋 Agent workflow:");
+                eprintln!("  1. Send the prompt to an LLM to identify key moments");
+                eprintln!("  2. Save the LLM JSON response as an array to:");
+                eprintln!("     {}", moments_path.display());
+                eprintln!("  3. Re-run this command to extract frames at those moments");
+                eprintln!();
+
+                // Build minimal report with transcript only, then exit
+                let report = WatchReport {
+                    title: if dl_result.title.is_empty() || dl_result.title == "Unknown" {
+                        cli.source.clone()
+                    } else {
+                        dl_result.title.clone()
+                    },
+                    source: cli.source.clone(),
+                    detail: detail.to_string(),
+                    uploader: dl_result.info.uploader.clone(),
+                    language: dl_result.info.language.clone(),
+                    engine: Some("transcript-moments-phase1".into()),
+                    frames: vec![],
+                    frames_dropped: 0,
+                    transcript: transcript_segments,
+                    transcript_source,
+                    duration: dl_result.info.duration.unwrap_or(0.0),
+                    working_dir: work.to_string_lossy().to_string(),
+                    warnings: vec!["Phase 1 complete — waiting for key_moments.json".into()],
+                    key_moments: None,
+                    key_moment_stats: None,
+                };
+
+                match &cli.output {
+                    cli::OutputFormat::Markdown => println!("{}", report.to_markdown()),
+                    cli::OutputFormat::Json => println!("{}", report.to_json()),
+                    cli::OutputFormat::Both => {
+                        println!("{}", report.to_markdown());
+                        let json_path = work.join("report.json");
+                        let _ = std::fs::write(&json_path, report.to_json());
+                    }
+                }
+                return Ok(());
+            }
+        }
     }
 
     // Step 3: Get video metadata
@@ -238,6 +305,17 @@ async fn main() -> anyhow::Result<()> {
                         dropped_out_of_window: 0,
                     })
                 }
+                DetailMode::TranscriptMoments => {
+                    // Handled separately below — skip standard frame extraction
+                    (vec![], frames::FrameMeta {
+                        engine: "transcript-moments".into(),
+                        candidate_count: 0,
+                        selected_count: 0,
+                        deduped_count: 0,
+                        fallback: false,
+                        dropped_out_of_window: 0,
+                    })
+                }
             };
 
             // Merge cue frames (pinned against cap)
@@ -325,14 +403,90 @@ async fn main() -> anyhow::Result<()> {
         std::fs::write(&prompt_path, &prompt)?;
         eprintln!("[watch2] Moments prompt written to {}", prompt_path.display());
     }
-    // Load existing key_moments.json if present
+    // Phase 2: TranscriptMoments — process key_moments.json and extract frames
     let moments_path = work.join("key_moments.json");
-    if moments_path.exists() {
-        if let Ok(data) = std::fs::read_to_string(&moments_path) {
-            if let Ok(moments) = serde_json::from_str::<Vec<watch2::moments::KeyMoment>>(&data) {
-                eprintln!("[watch2] Loaded {} key moments", moments.len());
-                // Use timestamps for cue frame extraction
+    let mut key_moments_raw: Vec<serde_json::Value> = Vec::new();
+    let mut key_moment_stats: Option<watch2::output::KeyMomentStats> = None;
+
+    if detail == DetailMode::TranscriptMoments && moments_path.exists() {
+        eprintln!("[watch2] Phase 2: Processing key moments from {}", moments_path.display());
+        match std::fs::read_to_string(&moments_path) {
+            Ok(data) => {
+                match serde_json::from_str::<Vec<watch2::moments::KeyMoment>>(&data) {
+                    Ok(moments) => {
+                        eprintln!("[watch2] Loaded {} key moments", moments.len());
+
+                        // Extract timestamps from moments
+                        let timestamps = watch2::moment_frames::get_timestamps_from_moments(&moments, None);
+                        eprintln!("[watch2] {} unique timestamps for frame extraction", timestamps.len());
+
+                        // Download video if needed for frame extraction
+                        if video_path.is_none() && is_url {
+                            eprintln!("[watch2] Downloading video for frame extraction...");
+                            dl_result = download::download_video(&cli.source, &download_dir, cli.cookies)?;
+                            video_path = dl_result.video_path;
+                            if let Some(ref vp) = video_path {
+                                if let Ok(meta) = frames::get_metadata(vp) {
+                                    duration = meta.duration;
+                                }
+                            }
+                        }
+
+                        // Extract frames at moment timestamps (uncapped)
+                        if let Some(ref vp) = video_path {
+                            eprintln!("[watch2] Extracting frames at {} moment timestamps...", timestamps.len());
+                            let focus_s = cli.start.as_deref().and_then(|s| parse_time(Some(s)));
+                            let focus_e = cli.end.as_deref().and_then(|s| parse_time(Some(s)));
+                            match frames::extract_at_timestamps(
+                                vp, &frames_dir, &timestamps, cli.resolution,
+                                None, // uncapped
+                                focus_s, focus_e,
+                            ) {
+                                Ok((extracted, meta)) => {
+                                    eprintln!(
+                                        "[watch2] Extracted {} frames ({} dropped out of window)",
+                                        extracted.len(), meta.dropped_out_of_window
+                                    );
+
+                                    // Link moments to frames
+                                    let mut moments = moments;
+                                    watch2::moment_frames::update_moments_with_frames(&mut moments, &extracted);
+
+                                    // Update frames for report
+                                    frames = extracted;
+
+                                    // Serialize moments for report
+                                    key_moments_raw = moments.iter().map(|m| {
+                                        serde_json::to_value(m).unwrap_or_default()
+                                    }).collect();
+
+                                    // Calculate stats
+                                    let mut by_reason: HashMap<String, usize> = HashMap::new();
+                                    let mut by_priority: HashMap<u32, usize> = HashMap::new();
+                                    for m in &key_moments_raw {
+                                        if let Some(reason) = m.get("reason").and_then(|v| v.as_str()) {
+                                            *by_reason.entry(reason.to_string()).or_insert(0) += 1;
+                                        }
+                                        if let Some(priority) = m.get("priority").and_then(|v| v.as_u64()) {
+                                            *by_priority.entry(priority as u32).or_insert(0) += 1;
+                                        }
+                                    }
+                                    key_moment_stats = Some(watch2::output::KeyMomentStats {
+                                        total: key_moments_raw.len(),
+                                        by_reason,
+                                        by_priority,
+                                    });
+                                }
+                                Err(e) => eprintln!("[watch2] ⚠️  Frame extraction failed: {}", e),
+                            }
+                        } else {
+                            eprintln!("[watch2] ⚠️  No video available for frame extraction");
+                        }
+                    }
+                    Err(e) => eprintln!("[watch2] ⚠️  Failed to parse key_moments.json: {}", e),
+                }
             }
+            Err(e) => eprintln!("[watch2] ⚠️  Failed to read key_moments.json: {}", e),
         }
     }
 
@@ -407,6 +561,8 @@ async fn main() -> anyhow::Result<()> {
         duration,
         working_dir: work.to_string_lossy().to_string(),
         warnings,
+        key_moments: if key_moments_raw.is_empty() { None } else { Some(key_moments_raw) },
+        key_moment_stats,
     };
 
     match &cli.output {

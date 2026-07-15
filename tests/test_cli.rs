@@ -1,5 +1,5 @@
 use clap::Parser;
-use watch2::cli::{Cli, OutputFormat};
+use watch2::cli::{Cli, DetailMode, OutputFormat};
 
 #[test]
 fn test_parse_basic_url() {
@@ -63,4 +63,28 @@ fn test_timestamps_flag() {
 fn test_timestamps_default_none() {
     let cli = Cli::try_parse_from(["watch", "test.mp4"]).unwrap();
     assert!(cli.timestamps.is_none());
+}
+
+#[test]
+fn test_parse_transcript_moments() {
+    let cli = Cli::try_parse_from([
+        "watch", "https://youtu.be/abc",
+        "--detail", "transcript-moments",
+        "--min-moments", "50",
+        "--out-dir", "/tmp/test-tm",
+    ]).unwrap();
+    assert_eq!(cli.detail, Some(DetailMode::TranscriptMoments));
+    assert_eq!(cli.min_moments, Some(50));
+    assert_eq!(cli.out_dir, Some("/tmp/test-tm".to_string()));
+}
+
+#[test]
+fn test_auto_moments_flag() {
+    let cli = Cli::try_parse_from([
+        "watch", "test.mp4",
+        "--auto-moments",
+        "--max-moments", "30",
+    ]).unwrap();
+    assert!(cli.auto_moments);
+    assert_eq!(cli.max_moments, 30);
 }

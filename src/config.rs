@@ -72,6 +72,7 @@ pub fn suggest_subtitle_language(
 #[derive(Debug, Clone, PartialEq)]
 pub enum DetailMode {
     Transcript,
+    TranscriptMoments,
     Efficient,
     Balanced,
     TokenBurner,
@@ -86,6 +87,7 @@ impl std::fmt::Display for DetailMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Transcript => write!(f, "transcript"),
+            Self::TranscriptMoments => write!(f, "transcript-moments"),
             Self::Efficient => write!(f, "efficient"),
             Self::Balanced => write!(f, "balanced"),
             Self::TokenBurner => write!(f, "token-burner"),
@@ -97,6 +99,7 @@ impl std::fmt::Display for DetailMode {
 #[derive(Debug, Clone)]
 pub struct WatchConfig {
     pub detail: DetailMode,
+    pub min_moments: Option<u32>,
     pub groq_api_key: Option<String>,
     pub openai_api_key: Option<String>,
     pub config_dir: PathBuf,
@@ -126,13 +129,18 @@ impl WatchConfig {
         let _ = dotenvy::from_path(".env");
         let detail = match std::env::var("WATCH_DETAIL").unwrap_or_default().as_str() {
             "transcript" => DetailMode::Transcript,
+            "transcript-moments" => DetailMode::TranscriptMoments,
             "efficient" => DetailMode::Efficient,
             "token-burner" => DetailMode::TokenBurner,
             "screenshot-first" => DetailMode::ScreenshotFirst,
             _ => DetailMode::Balanced,
         };
+        let min_moments = std::env::var("WATCH_MIN_MOMENTS")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok());
         Self {
             detail,
+            min_moments,
             groq_api_key: std::env::var("GROQ_API_KEY")
                 .ok()
                 .filter(|s| !s.is_empty() && !is_placeholder(s)),
@@ -145,6 +153,7 @@ impl WatchConfig {
     pub fn frame_cap(&self, detail: &DetailMode) -> Option<u32> {
         match detail {
             DetailMode::Transcript => None,
+            DetailMode::TranscriptMoments => None,  // uncapped — driven by min_moments
             DetailMode::Efficient => Some(50),
             DetailMode::Balanced => Some(100),
             DetailMode::TokenBurner => None,

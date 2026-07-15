@@ -1,4 +1,5 @@
-use watch2::output::{WatchReport, FrameInfo, TranscriptSegment};
+use std::collections::HashMap;
+use watch2::output::{FrameInfo, KeyMomentStats, TranscriptSegment, WatchReport};
 
 fn make_test_report() -> WatchReport {
     WatchReport {
@@ -15,6 +16,8 @@ fn make_test_report() -> WatchReport {
         duration: 60.0,
         working_dir: "/tmp/test".into(),
         warnings: vec!["Test warning".into()],
+        key_moments: None,
+        key_moment_stats: None,
     }
 }
 
@@ -57,6 +60,8 @@ fn make_full_report() -> WatchReport {
         duration: 120.0,
         working_dir: "/tmp/full".into(),
         warnings: vec!["Warning one".into(), "Warning two".into()],
+        key_moments: None,
+        key_moment_stats: None,
     }
 }
 
@@ -217,4 +222,39 @@ fn test_metadata_skipped_when_none() {
     // uploader and language are None → should be absent
     assert!(parsed.get("uploader").is_none());
     assert!(parsed.get("language").is_none());
+}
+
+#[test]
+fn test_key_moments_in_report() {
+    let mut report = make_test_report();
+    let moments = vec![
+        serde_json::json!({
+            "timestamp": 54.0,
+            "word": "Ragnarok",
+            "context": "Ya kan Ragnarok",
+            "reason": "proper_noun",
+            "question": "What game name is displayed?",
+            "priority": 1,
+        }),
+        serde_json::json!({
+            "timestamp": 120.0,
+            "word": "1 juta",
+            "context": "1 juta dolar",
+            "reason": "claim",
+            "question": "What amount is shown?",
+            "priority": 1,
+        }),
+    ];
+    report.key_moments = Some(moments);
+    report.key_moment_stats = Some(KeyMomentStats {
+        total: 2,
+        by_reason: HashMap::from([("proper_noun".into(), 1), ("claim".into(), 1)]),
+        by_priority: HashMap::from([(1, 2)]),
+    });
+    let md = report.to_markdown();
+    assert!(md.contains("Key Moments (2)"));
+    assert!(md.contains("Ragnarok"));
+    let json = report.to_json();
+    assert!(json.contains("\"key_moments\""));
+    assert!(json.contains("\"key_moment_stats\""));
 }

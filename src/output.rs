@@ -1,5 +1,6 @@
 use crate::timestamp::format_time;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Serialize, Clone)]
 pub struct FrameInfo {
@@ -24,6 +25,13 @@ pub struct TranscriptSegment {
     pub words: Option<Vec<WordTiming>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct KeyMomentStats {
+    pub total: usize,
+    pub by_reason: HashMap<String, usize>,
+    pub by_priority: HashMap<u32, usize>,
+}
+
 #[derive(Serialize)]
 pub struct WatchReport {
     pub title: String,
@@ -43,6 +51,10 @@ pub struct WatchReport {
     pub working_dir: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_moments: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_moment_stats: Option<KeyMomentStats>,
 }
 
 impl WatchReport {
@@ -80,6 +92,20 @@ impl WatchReport {
             }
             out.push('\n');
         }
+        if let Some(ref moments) = self.key_moments {
+            if !moments.is_empty() {
+                out.push_str(&format!("## Key Moments ({})\n\n", moments.len()));
+                for m in moments {
+                    let ts = m.get("timestamp").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let word = m.get("word").and_then(|v| v.as_str()).unwrap_or("?");
+                    let reason = m.get("reason").and_then(|v| v.as_str()).unwrap_or("?");
+                    let priority = m.get("priority").and_then(|v| v.as_u64()).unwrap_or(3);
+                    out.push_str(&format!("- `[{}]` P{} `{}` ({})\n",
+                        format_time(ts), priority, word, reason));
+                }
+                out.push('\n');
+            }
+        }
         if self.frames.is_empty() && self.transcript.is_empty() {
             out.push_str("*No frames or transcript available.*\n");
         }
@@ -111,6 +137,8 @@ mod tests {
             frames: vec![], frames_dropped: 0, transcript: vec![],
             transcript_source: "none".into(), duration: 60.0, working_dir: "/tmp/test".into(),
             warnings: vec![],
+            key_moments: None,
+            key_moment_stats: None,
         };
         let md = report.to_markdown();
         assert!(md.contains("# Test"));
