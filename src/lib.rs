@@ -1,5 +1,7 @@
 pub mod cli;
+pub mod cache;
 pub mod config;
+pub mod pipeline;
 pub mod dedup;
 pub mod download;
 pub mod error;
@@ -12,7 +14,6 @@ pub mod transcript;
 pub mod moments;
 pub mod moment_frames;
 pub mod vision;
-pub mod vision_batch;
 pub mod whisper;
 pub mod corrections;
 pub mod synthesis;

@@ -13,6 +13,9 @@ serde_json = "1"
 async-openai = { version = "0.41", features = ["audio"] }
 groq-api-rust = "0.3"
 reqwest = { version = "0.12", features = ["multipart", "json"] }
+async-trait = "0.1"
+sha2 = "0.10"
+hex = "0.4"
 whisper-rs = { version = "0.16", optional = true }
 dotenvy = "0.15"
 dirs = "6"

@@ -82,6 +82,14 @@ pub struct Cli {
     /// Stats display format: telegram (rich) or compact (single line)
     #[arg(long, value_enum, default_value_t = StatsFormat::Telegram)]
     pub stats_format: StatsFormat,
+
+    /// Disable download cache
+    #[arg(long)]
+    pub no_cache: bool,
+
+    /// Custom cache directory
+    #[arg(long)]
+    pub cache_dir: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, ValueEnum)]

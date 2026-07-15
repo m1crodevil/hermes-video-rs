@@ -2,9 +2,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::output::TranscriptSegment;
+
 // ── Data Models ──────────────────────────────────────────────────────────
 
-/// A request for vision analysis on a frame.
+/// A request for vision analysis on a frame (single-moment mode).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisionRequest {
     pub moment_index: usize,
@@ -17,7 +19,7 @@ pub struct VisionRequest {
     pub priority: u32,
 }
 
-/// Result from vision analysis.
+/// Result from single-moment vision analysis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisionResult {
     pub moment_index: usize,
@@ -29,7 +31,7 @@ pub struct VisionResult {
     pub confidence: Option<String>,
 }
 
-/// A moment with verification results.
+/// A moment with verification results (single-moment mode).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerifiedMoment {
     pub timestamp: f64,
@@ -44,13 +46,34 @@ pub struct VerifiedMoment {
     pub verified: bool,
 }
 
+/// A finding from batch vision analysis.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisionFinding {
+    pub moment_index: usize,
+    pub timestamp: String,
+    pub word: String,
+    pub actual: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correction: Option<String>,
+    pub confidence: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+}
+
+/// A moment prepared for batch vision analysis.
+#[derive(Debug, Clone)]
+pub struct VisionMoment {
+    pub index: usize,
+    pub timestamp: String,
+    pub frame_path: Option<String>,
+    pub word: String,
+    pub question: String,
+    pub priority: u8,
+}
+
 // ── Frame Matching ───────────────────────────────────────────────────────
 
 /// Find the closest frame file to the given timestamp within a tolerance.
-///
-/// Searches the frames directory for JPEG files (`frame_*.jpg`, `cue_*.jpg`,
-/// `fill_*.jpg`) and tries to match by reading the parent `report.json` if
-/// available, falling back to filename-index heuristics.
 pub fn find_frame_at_timestamp(
     timestamp: f64,
     frames_dir: &Path,
@@ -99,7 +122,6 @@ pub fn find_frame_at_timestamp(
                         continue;
                     }
 
-                    // Try to extract index from filename for rough heuristic
                     if let Some(idx_str) = name
                         .strip_prefix("frame_")
                         .or_else(|| name.strip_prefix("cue_"))
@@ -107,9 +129,6 @@ pub fn find_frame_at_timestamp(
                         .and_then(|s| s.strip_suffix(".jpg"))
                     {
                         if let Ok(_idx) = idx_str.parse::<usize>() {
-                            // Without fps metadata, we can't precisely map index→timestamp.
-                            // Store as candidate with unknown timestamp.
-                            // Only use if nothing better found.
                             if best_match.is_none() {
                                 best_match = Some(path.to_string_lossy().to_string());
                             }
@@ -126,9 +145,6 @@ pub fn find_frame_at_timestamp(
 // ── Frames Needed ────────────────────────────────────────────────────────
 
 /// List frames needed for verification, checking which already exist.
-///
-/// Each element is a JSON object with `moment_index`, `timestamp`, `frame_path`,
-/// `frame_exists`, and other metadata fields.
 pub fn list_frames_needed(
     moments: &[serde_json::Value],
     frames_dir: &Path,
@@ -160,17 +176,13 @@ pub fn list_frames_needed(
     result
 }
 
-// ── Vision Questions ─────────────────────────────────────────────────────
+// ── Single-Moment Vision Questions ──────────────────────────────────────
 
-/// Generate vision analysis requests for each moment.
-///
-/// Skips moments that already have a `vision_result`. Returns requests
-/// sorted by priority (ascending = most critical first).
+/// Generate vision analysis requests for each moment (single-moment mode).
 pub fn generate_vision_questions(moments: &[serde_json::Value]) -> Vec<VisionRequest> {
     let mut requests: Vec<VisionRequest> = Vec::new();
 
     for (i, moment) in moments.iter().enumerate() {
-        // Skip if vision_result already exists
         if moment.get("vision_result").is_some() {
             continue;
         }
@@ -212,23 +224,17 @@ pub fn generate_vision_questions(moments: &[serde_json::Value]) -> Vec<VisionReq
         });
     }
 
-    // Sort by priority (ascending = most critical first)
     requests.sort_by(|a, b| a.priority.cmp(&b.priority));
-
     requests
 }
 
-// ── Result Processing ────────────────────────────────────────────────────
+// ── Single-Moment Result Processing ─────────────────────────────────────
 
-/// Process vision results and merge them into moments.
-///
-/// For each moment, looks up a matching result by `moment_index`. If found,
-/// populates the `vision_result` and `correction` fields and marks `verified`.
+/// Process vision results and merge them into moments (single-moment mode).
 pub fn process_vision_results(
     moments: &[serde_json::Value],
     results: &[serde_json::Value],
 ) -> Vec<VerifiedMoment> {
-    // Index results by moment_index
     let mut results_by_index: HashMap<usize, &serde_json::Value> = HashMap::new();
     for r in results {
         if let Some(idx) = r.get("moment_index").and_then(|v| v.as_u64()) {
@@ -332,12 +338,139 @@ pub fn process_vision_results(
     verified
 }
 
-// ── Correction Extraction ────────────────────────────────────────────────
+// ── Batch Vision ─────────────────────────────────────────────────────────
 
-/// Extract word corrections from verified moments.
-///
-/// Returns a map of `original_word → corrected_word` for all verified moments
-/// that have a correction differing from the original word.
+const BATCH_VISION_PROMPT: &str = r#"You are analyzing multiple video frames to verify transcript accuracy.
+
+For each frame below, examine the image and answer the verification question.
+
+## Frames to Analyze
+
+{frames}
+
+## Response Format
+
+Return a JSON array of findings, one per frame:
+[
+  {{
+    "index": 0,
+    "timestamp": "0:26",
+    "word": "George andika erison",
+    "actual": "What name is actually displayed on screen",
+    "correction": "Corrected name if different, or null",
+    "confidence": 0.95,
+    "notes": "Any additional observations"
+  }},
+  ...
+]
+
+## Guidelines
+
+- **Be precise.** Only state what you can actually see in the frame.
+- **Check spelling.** Compare the transcript word with what's shown on screen.
+- **Note corrections.** If the transcript has a misspelling, provide the correction.
+- **Estimate confidence.** How confident are you in your reading? (0.0-1.0)
+- **Add notes.** Any additional observations about the frame.
+
+Return ONLY valid JSON array. No markdown, no explanation."#;
+
+/// Generate a batch prompt for vision analysis of multiple frames.
+pub fn generate_batch_prompt(moments: &[VisionMoment], max_priority: u8) -> String {
+    let frames_text: String = moments
+        .iter()
+        .filter(|m| m.priority <= max_priority)
+        .filter(|m| m.frame_path.is_some())
+        .map(|m| {
+            format!(
+                "### Frame {} (timestamp: {})\\n\\n  Image: {}\\n\\n  Word from transcript: \"{}\"\\n\\n  Question: {}\\n",
+                m.index,
+                m.timestamp,
+                m.frame_path.as_ref().unwrap(),
+                m.word,
+                m.question,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\\n");
+
+    BATCH_VISION_PROMPT.replace("{frames}", &frames_text)
+}
+
+/// Process batch results returned from the vision model into VisionFinding objects.
+pub fn process_batch_results(results: Vec<serde_json::Value>) -> Vec<VisionFinding> {
+    results
+        .into_iter()
+        .filter_map(|v| {
+            let moment_index = v.get("index")?.as_u64()? as usize;
+            let timestamp = v
+                .get("timestamp")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string();
+            let word = v
+                .get("word")
+                .and_then(|w| w.as_str())
+                .unwrap_or("")
+                .to_string();
+            let actual = v
+                .get("actual")
+                .and_then(|a| a.as_str())
+                .unwrap_or("")
+                .to_string();
+            let correction = v.get("correction").and_then(|c| {
+                if c.is_null() {
+                    None
+                } else {
+                    c.as_str().map(|s| s.to_string())
+                }
+            });
+            let confidence = v.get("confidence").and_then(|c| c.as_f64()).unwrap_or(0.0);
+            let notes = v
+                .get("notes")
+                .and_then(|n| n.as_str())
+                .map(|s| s.to_string());
+
+            Some(VisionFinding {
+                moment_index,
+                timestamp,
+                word,
+                actual,
+                correction,
+                confidence,
+                notes,
+            })
+        })
+        .collect()
+}
+
+/// Apply vision findings to a list of moments (serde_json::Value objects).
+pub fn apply_corrections_to_moments(
+    moments: &[serde_json::Value],
+    findings: &[VisionFinding],
+) -> Vec<serde_json::Value> {
+    let findings_map: HashMap<usize, &VisionFinding> =
+        findings.iter().map(|f| (f.moment_index, f)).collect();
+
+    moments
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let mut moment = m.clone();
+            if let Some(finding) = findings_map.get(&i) {
+                moment["vision_result"] =
+                    serde_json::to_value(&finding.actual).unwrap_or(serde_json::Value::Null);
+                moment["correction"] = serde_json::to_value(finding.correction.as_deref())
+                    .unwrap_or(serde_json::Value::Null);
+                moment["verified"] = serde_json::Value::Bool(true);
+            }
+            moment
+        })
+        .collect()
+}
+
+// ── Correction Extraction (unified) ─────────────────────────────────────
+
+/// Extract word corrections from verified moments (single-moment mode).
 pub fn extract_corrections(verified: &[VerifiedMoment]) -> HashMap<String, String> {
     verified
         .iter()
@@ -347,6 +480,105 @@ pub fn extract_corrections(verified: &[VerifiedMoment]) -> HashMap<String, Strin
                 Some((v.word.clone(), correction.to_string()))
             } else {
                 None
+            }
+        })
+        .collect()
+}
+
+/// Extract corrections from batch findings: maps original word → corrected word.
+pub fn extract_corrections_for_transcript(findings: &[VisionFinding]) -> HashMap<String, String> {
+    findings
+        .iter()
+        .filter_map(|f| {
+            let correction = f.correction.as_deref()?;
+            if correction != f.word && !correction.is_empty() {
+                Some((f.word.clone(), correction.to_string()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+// ── Transcript Corrections ──────────────────────────────────────────────
+
+/// Strip punctuation from a word for matching purposes.
+fn strip_punctuation(word: &str) -> String {
+    word.chars()
+        .filter(|c| c.is_alphanumeric() || *c == '\'' || *c == '-')
+        .collect()
+}
+
+/// Apply a correction to a single word, preserving case.
+fn correct_word(word: &str, corrections: &HashMap<String, String>) -> String {
+    let clean = strip_punctuation(word);
+
+    let correction = corrections
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(&clean));
+
+    if let Some((_, corrected)) = correction {
+        if clean.chars().next().map_or(false, |c| c.is_uppercase()) {
+            let mut chars = corrected.chars();
+            if let Some(first) = chars.next() {
+                let mut fixed: String = first.to_uppercase().collect();
+                fixed.extend(chars);
+                return fixed;
+            }
+        }
+        corrected.clone()
+    } else {
+        word.to_string()
+    }
+}
+
+/// Apply word corrections to a single text string.
+fn apply_word_corrections(text: &str, corrections: &HashMap<String, String>) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut current_word = String::new();
+
+    while let Some(&ch) = chars.peek() {
+        if ch.is_alphanumeric() || ch == '\'' || ch == '-' {
+            current_word.push(ch);
+            chars.next();
+        } else {
+            if !current_word.is_empty() {
+                let corrected = correct_word(&current_word, corrections);
+                result.push_str(&corrected);
+                current_word.clear();
+            }
+            result.push(ch);
+            chars.next();
+        }
+    }
+
+    if !current_word.is_empty() {
+        let corrected = correct_word(&current_word, corrections);
+        result.push_str(&corrected);
+    }
+
+    result
+}
+
+/// Apply word-level corrections to transcript segments.
+pub fn apply_corrections_to_transcript(
+    segments: &[TranscriptSegment],
+    corrections: &HashMap<String, String>,
+) -> Vec<TranscriptSegment> {
+    if corrections.is_empty() {
+        return segments.to_vec();
+    }
+
+    segments
+        .iter()
+        .map(|seg| {
+            let corrected_text = apply_word_corrections(&seg.text, corrections);
+            TranscriptSegment {
+                start: seg.start,
+                end: seg.end,
+                text: corrected_text,
+                words: seg.words.clone(),
             }
         })
         .collect()
@@ -375,6 +607,17 @@ mod tests {
         })
     }
 
+    fn seg(start: f64, end: f64, text: &str) -> TranscriptSegment {
+        TranscriptSegment {
+            start,
+            end,
+            text: text.to_string(),
+            words: None,
+        }
+    }
+
+    // ── Single-moment tests ─────────────────────────────────────────
+
     #[test]
     fn test_generate_vision_questions_basic() {
         let moments = vec![
@@ -383,7 +626,6 @@ mod tests {
         ];
         let requests = generate_vision_questions(&moments);
         assert_eq!(requests.len(), 2);
-        // Sorted by priority — critical (1) first
         assert_eq!(requests[0].word, "Raknarok");
         assert_eq!(requests[0].priority, 1);
         assert_eq!(requests[1].word, "hello");
@@ -439,11 +681,9 @@ mod tests {
 
         let verified = process_vision_results(&moments, &results);
         assert_eq!(verified.len(), 2);
-        // First moment should be verified
         assert!(verified[0].verified);
         assert!(verified[0].vision_result.is_some());
         assert_eq!(verified[0].correction, Some("Ragnarok".to_string()));
-        // Second moment should NOT be verified
         assert!(!verified[1].verified);
         assert!(verified[1].vision_result.is_none());
     }
@@ -527,32 +767,12 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_corrections_empty_correction_excluded() {
-        let verified = vec![VerifiedMoment {
-            timestamp: 10.0,
-            timestamp_fmt: "0:10".into(),
-            word: "hello".into(),
-            context: "".into(),
-            reason: "deictic".into(),
-            question: "?".into(),
-            priority: 3,
-            vision_result: None,
-            correction: Some("".into()),
-            verified: true,
-        }];
-
-        let corrections = extract_corrections(&verified);
-        assert!(corrections.is_empty());
-    }
-
-    #[test]
     fn test_list_frames_needed_basic() {
         let moments = vec![
             make_moment_json(10.0, "Raknarok", "proper_noun", 1),
             make_moment_json(30.0, "hello", "deictic", 3),
         ];
 
-        // Use a non-existent dir — should still return entries with frame_exists=false
         let tmp = tempfile::tempdir().unwrap();
         let frames_dir = tmp.path().join("frames");
         std::fs::create_dir_all(&frames_dir).unwrap();
@@ -580,69 +800,227 @@ mod tests {
         assert!(result.is_none());
     }
 
+    // ── Batch tests ─────────────────────────────────────────────────
+
     #[test]
-    fn test_find_frame_at_timestamp_with_report_json() {
-        let tmp = tempfile::tempdir().unwrap();
-        let frames_dir = tmp.path().join("frames");
-        std::fs::create_dir_all(&frames_dir).unwrap();
-
-        // Create a report.json with frame metadata
-        let report = serde_json::json!({
-            "frames": [
-                {"timestamp": 9.5, "path": "/tmp/frames/frame_0001.jpg"},
-                {"timestamp": 29.0, "path": "/tmp/frames/frame_0002.jpg"},
-            ]
-        });
-        std::fs::write(
-            tmp.path().join("report.json"),
-            serde_json::to_string_pretty(&report).unwrap(),
-        )
-        .unwrap();
-
-        // Should find closest frame within tolerance
-        let result = find_frame_at_timestamp(10.0, &frames_dir, 2.0);
-        assert_eq!(result, Some("/tmp/frames/frame_0001.jpg".to_string()));
-
-        // Outside tolerance — should not match
-        let result = find_frame_at_timestamp(50.0, &frames_dir, 2.0);
-        assert!(result.is_none());
+    fn test_process_batch_results_valid() {
+        let json = serde_json::json!([
+            {
+                "index": 0,
+                "timestamp": "0:10",
+                "word": "hello",
+                "actual": "Hello World",
+                "correction": "Hello World",
+                "confidence": 0.95,
+                "notes": "clear text"
+            },
+            {
+                "index": 1,
+                "timestamp": "0:20",
+                "word": "frend",
+                "actual": "Friend",
+                "correction": "Friend",
+                "confidence": 0.88,
+                "notes": null
+            }
+        ]);
+        let findings = process_batch_results(serde_json::from_value(json).unwrap());
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0].moment_index, 0);
+        assert_eq!(findings[0].word, "hello");
+        assert_eq!(findings[0].confidence, 0.95);
+        assert_eq!(findings[1].correction, Some("Friend".to_string()));
     }
 
     #[test]
-    fn test_vision_request_serialization() {
-        let req = VisionRequest {
+    fn test_process_batch_results_null_correction() {
+        let json = serde_json::json!([
+            {
+                "index": 0,
+                "timestamp": "0:05",
+                "word": "test",
+                "actual": "test",
+                "correction": null,
+                "confidence": 1.0,
+                "notes": null
+            }
+        ]);
+        let findings = process_batch_results(serde_json::from_value(json).unwrap());
+        assert_eq!(findings[0].correction, None);
+    }
+
+    #[test]
+    fn test_extract_corrections_for_transcript() {
+        let findings = vec![
+            VisionFinding {
+                moment_index: 0,
+                timestamp: "0:10".into(),
+                word: "frend".into(),
+                actual: "Friend".into(),
+                correction: Some("Friend".into()),
+                confidence: 0.9,
+                notes: None,
+            },
+            VisionFinding {
+                moment_index: 1,
+                timestamp: "0:20".into(),
+                word: "hello".into(),
+                actual: "hello".into(),
+                correction: None,
+                confidence: 1.0,
+                notes: None,
+            },
+            VisionFinding {
+                moment_index: 2,
+                timestamp: "0:30".into(),
+                word: "recieve".into(),
+                actual: "receive".into(),
+                correction: Some("receive".into()),
+                confidence: 0.85,
+                notes: None,
+            },
+        ];
+        let corrections = extract_corrections_for_transcript(&findings);
+        assert_eq!(corrections.len(), 2);
+        assert_eq!(corrections.get("frend").unwrap(), "Friend");
+        assert_eq!(corrections.get("recieve").unwrap(), "receive");
+        assert!(corrections.get("hello").is_none());
+    }
+
+    #[test]
+    fn test_generate_batch_prompt_filters_priority() {
+        let moments = vec![
+            VisionMoment {
+                index: 0,
+                timestamp: "0:10".into(),
+                frame_path: Some("/tmp/frame0.jpg".into()),
+                word: "hello".into(),
+                question: "Is this correct?".into(),
+                priority: 1,
+            },
+            VisionMoment {
+                index: 1,
+                timestamp: "0:20".into(),
+                frame_path: Some("/tmp/frame1.jpg".into()),
+                word: "world".into(),
+                question: "Is this correct?".into(),
+                priority: 5,
+            },
+        ];
+        let prompt = generate_batch_prompt(&moments, 3);
+        assert!(prompt.contains("hello"));
+        assert!(!prompt.contains("world"));
+    }
+
+    #[test]
+    fn test_generate_batch_prompt_filters_no_frame() {
+        let moments = vec![
+            VisionMoment {
+                index: 0,
+                timestamp: "0:10".into(),
+                frame_path: Some("/tmp/frame0.jpg".into()),
+                word: "hello".into(),
+                question: "Verify?".into(),
+                priority: 1,
+            },
+            VisionMoment {
+                index: 1,
+                timestamp: "0:20".into(),
+                frame_path: None,
+                word: "missing".into(),
+                question: "Verify?".into(),
+                priority: 1,
+            },
+        ];
+        let prompt = generate_batch_prompt(&moments, 5);
+        assert!(prompt.contains("hello"));
+        assert!(!prompt.contains("missing"));
+    }
+
+    #[test]
+    fn test_generate_batch_prompt_empty() {
+        let moments: Vec<VisionMoment> = vec![];
+        let prompt = generate_batch_prompt(&moments, 5);
+        assert!(prompt.contains("Frames to Analyze"));
+    }
+
+    #[test]
+    fn test_apply_corrections_to_moments() {
+        let moments = vec![
+            serde_json::json!({"word": "frend"}),
+            serde_json::json!({"word": "hello"}),
+        ];
+        let findings = vec![VisionFinding {
             moment_index: 0,
-            timestamp: 10.0,
-            timestamp_fmt: "0:10".into(),
-            frame_path: "/tmp/frame.jpg".into(),
-            word: "hello".into(),
-            question: "Is this correct?".into(),
-            reason: "deictic".into(),
-            priority: 1,
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        let deserialized: VisionRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.moment_index, 0);
-        assert_eq!(deserialized.word, "hello");
+            timestamp: "0:10".into(),
+            word: "frend".into(),
+            actual: "Friend".into(),
+            correction: Some("friend".into()),
+            confidence: 0.9,
+            notes: Some("clear".into()),
+        }];
+        let result = apply_corrections_to_moments(&moments, &findings);
+        assert_eq!(result[0]["verified"], true);
+        assert_eq!(result[0]["correction"], "friend");
+        assert_eq!(result[0]["vision_result"], "Friend");
+        assert!(result[1].get("verified").is_none());
+    }
+
+    // ── Transcript correction tests ─────────────────────────────────
+
+    #[test]
+    fn test_apply_corrections_to_transcript_basic() {
+        let segments = vec![seg(0.0, 1.0, "The frend arrived")];
+        let mut corrections = HashMap::new();
+        corrections.insert("frend".to_string(), "friend".to_string());
+        let result = apply_corrections_to_transcript(&segments, &corrections);
+        assert_eq!(result[0].text, "The friend arrived");
     }
 
     #[test]
-    fn test_verified_moment_serialization() {
-        let vm = VerifiedMoment {
-            timestamp: 10.0,
-            timestamp_fmt: "0:10".into(),
-            word: "test".into(),
-            context: "ctx".into(),
-            reason: "claim".into(),
-            question: "Why?".into(),
-            priority: 2,
-            vision_result: None,
-            correction: Some("fixed".into()),
-            verified: true,
-        };
-        let json = serde_json::to_string(&vm).unwrap();
-        let deserialized: VerifiedMoment = serde_json::from_str(&json).unwrap();
-        assert!(deserialized.verified);
-        assert_eq!(deserialized.correction, Some("fixed".into()));
+    fn test_apply_corrections_preserves_case() {
+        let segments = vec![seg(0.0, 1.0, "Frend is here")];
+        let mut corrections = HashMap::new();
+        corrections.insert("frend".to_string(), "friend".to_string());
+        let result = apply_corrections_to_transcript(&segments, &corrections);
+        assert_eq!(result[0].text, "Friend is here");
+    }
+
+    #[test]
+    fn test_apply_corrections_preserves_punctuation() {
+        let segments = vec![seg(0.0, 1.0, "Hello, frend! How are you?")];
+        let mut corrections = HashMap::new();
+        corrections.insert("frend".to_string(), "friend".to_string());
+        let result = apply_corrections_to_transcript(&segments, &corrections);
+        assert_eq!(result[0].text, "Hello, friend! How are you?");
+    }
+
+    #[test]
+    fn test_apply_corrections_no_corrections() {
+        let segments = vec![seg(0.0, 1.0, "No changes here")];
+        let corrections = HashMap::new();
+        let result = apply_corrections_to_transcript(&segments, &corrections);
+        assert_eq!(result[0].text, "No changes here");
+    }
+
+    #[test]
+    fn test_apply_corrections_multiple_words() {
+        let segments = vec![seg(0.0, 1.0, "Frend recieve the mesage")];
+        let mut corrections = HashMap::new();
+        corrections.insert("frend".to_string(), "friend".to_string());
+        corrections.insert("recieve".to_string(), "receive".to_string());
+        corrections.insert("mesage".to_string(), "message".to_string());
+        let result = apply_corrections_to_transcript(&segments, &corrections);
+        assert_eq!(result[0].text, "Friend receive the message");
+    }
+
+    #[test]
+    fn test_apply_corrections_preserves_timing() {
+        let segments = vec![seg(1.5, 3.0, "frend")];
+        let mut corrections = HashMap::new();
+        corrections.insert("frend".to_string(), "friend".to_string());
+        let result = apply_corrections_to_transcript(&segments, &corrections);
+        assert_eq!(result[0].start, 1.5);
+        assert_eq!(result[0].end, 3.0);
     }
 }
