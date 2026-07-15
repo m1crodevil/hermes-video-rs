@@ -357,7 +357,11 @@ pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool) -> Result<Do
     for opt in &network_opts {
         args.push(opt.as_str());
     }
+    // Cap video quality at 720p to avoid huge downloads (matches Python hermes-video)
+    let format_str = "bv*[height<=720]+ba/b[height<=720]/bv+ba/b";
     args.extend([
+        "-f", format_str,
+        "--merge-output-format", "mp4",
         "--write-subs",
         "--write-auto-subs",
         "--sub-langs", &lang_pattern,
