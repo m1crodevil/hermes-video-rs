@@ -26,7 +26,7 @@ Zero config to start. `yt-dlp` and `ffmpeg` are the only runtime dependencies. C
 | **Memory** | ~50-100MB | ~5-15MB |
 | **Binary** | 0 (needs Python runtime) | 5.4MB self-contained |
 | **Install** | pip + yt-dlp + ffmpeg | Single binary + yt-dlp + ffmpeg |
-| **Tests** | 1,379 LOC | 605 LOC (158 passing) |
+| **Tests** | 1,379 LOC | 669 LOC (174 passing) |
 
 ---
 
@@ -49,14 +49,14 @@ Zero config to start. `yt-dlp` and `ffmpeg` are the only runtime dependencies. C
 ## How It Works
 
 1. **You paste a video and a question.** URL (anything yt-dlp supports — YouTube, Loom, TikTok, X, Instagram, plus a few hundred more) or a local path (`.mp4`, `.mov`, `.mkv`, `.webm`).
-2. **`yt-dlp` checks captions first.** At `transcript` detail, captioned URLs return without downloading video. For other modes, or when Whisper needs audio, it downloads only what the run needs.
+2. **`yt-dlp` checks captions first.** At `transcript` detail, captioned URLs return without downloading video. For other modes, or when Whisper needs audio, it downloads only what the run needs. **LLM language detection** identifies content language from title+description for optimal subtitle selection.
 3. **`ffmpeg` extracts frames at the chosen detail.** `efficient` decodes keyframes only (`-skip_frame nokey`, near-instant); `balanced`/`token-burner` use scene-change detection with **adaptive thresholds** — lower for long videos (0.12 at 60+ min), higher for short clips (0.25 at ≤1 min). Large gaps between scenes are filled with uniformly-sampled frames to ensure minimum coverage. JPEGs are 512px wide by default and clamped to 1998px tall for Hermes Read compatibility.
 4. **The transcript comes from one of two places.** First try: `yt-dlp` pulls native captions (manual or auto-generated) from the source. Fallback: extract a mono 16 kHz 64 kbps mp3 audio clip and ship it to Whisper — Groq's `whisper-large-v3` (preferred) or OpenAI's `whisper-1`.
 5. **Frames + transcript are handed to Hermes.** The script builds a `WatchReport` from all pipeline data — metadata, frames with timestamps and reasons, transcript segments (with word-level timing when available from JSON3 captions).
 6. **Optional: LLM-driven moment detection.** With `--auto-moments`, the transcript is analyzed to identify moments needing visual verification — proper nouns, claims, deictic references, speaker identity clues. Frames are extracted at those exact timestamps.
 7. **Optional: Batch vision verification.** The agent analyzes key frames with specific questions (not generic "what is shown?"), corrects misspelled names, validates claims, and identifies speakers from visual cues.
 8. **Hermes answers grounded in what's actually on screen and in the audio.** Not "based on the description" or "according to the title." It saw the frames. It heard the transcript. It verified the facts.
-9. **Cleanup.** The downloaded video file is deleted automatically after frame extraction to save disk space (200MB–1GB per run). Pass `--keep-video` to retain it.
+9. **Stats + cleanup.** Processing stats are printed if `--stats` is set. The downloaded video file is deleted automatically after frame extraction to save disk space (200MB–1GB per run). Pass `--keep-video` to retain it. Results are cached by default for instant re-runs.
 
 ---
 
@@ -80,18 +80,20 @@ Zero config to start. `yt-dlp` and `ffmpeg` are the only runtime dependencies. C
 
 | Mode | Speed | Frames | Best For |
 |------|-------|--------|----------|
-| `screenshot-first` | ~30s | LLM-driven | Long videos with captions |
 | `transcript` | Fastest | 0 | Transcript-only, no video download |
+| `transcript-moments` | ~30s | LLM-driven | Two-phase: detect key moments → extract frames for verification |
+| `screenshot-first` | ~30s | LLM-driven | One frame per subtitle segment |
 | `efficient` | ~0.5s | 50 | Quick scan, keyframes only |
 | `balanced` | ~20s | 100 | General analysis (default) |
 | `token-burner` | ~21s | Uncapped | Full visual coverage |
 
 ```
-/watch2 https://youtu.be/abc --detail transcript     # transcript only
-/watch2 https://youtu.be/abc --detail efficient      # fast keyframes
-/watch2 https://youtu.be/abc --detail balanced       # scene-aware (default)
-/watch2 https://youtu.be/abc --detail token-burner   # uncapped
-/watch2 https://youtu.be/abc --detail screenshot-first  # one frame per subtitle
+/watch2 https://youtu.be/abc --detail transcript          # transcript only
+/watch2 https://youtu.be/abc --detail transcript-moments  # two-phase moment detection
+/watch2 https://youtu.be/abc --detail efficient           # fast keyframes
+/watch2 https://youtu.be/abc --detail balanced            # scene-aware (default)
+/watch2 https://youtu.be/abc --detail token-burner        # uncapped
+/watch2 https://youtu.be/abc --detail screenshot-first    # one frame per subtitle
 ```
 
 **Other options:**
@@ -109,9 +111,11 @@ Zero config to start. `yt-dlp` and `ffmpeg` are the only runtime dependencies. C
 | `--keep-video` | Retain downloaded video | false |
 | `--cookies` | Use Chrome cookies for yt-dlp (age-restricted videos) | false |
 | `--out-dir DIR` | Custom working directory | tmp |
+| `--no-cache` | Disable download cache | false |
+| `--cache-dir DIR` | Custom cache directory | `~/.cache/watch2` |
 | `--auto-moments` | LLM-driven moment detection for visual verification | false |
 | `--max-moments N` | Max key moments to identify | 50 |
-| `--min-moments N` | Min key moments to detect | 50 |
+| `--min-moments N` | Min key moments to detect (auto-calculated if omitted) | auto |
 | `--stats` | Include analysis stats in output | false |
 | `--stats-format telegram\|compact` | Stats output format | telegram |
 
@@ -185,29 +189,44 @@ SETUP_COMPLETE=true
 ```
 watch2/
 ├── src/
-│   ├── main.rs           # Pipeline orchestrator (8 steps)
-│   ├── cli.rs            # clap CLI definition
-│   ├── config.rs         # Config loading (.env) + language detection
-│   ├── download.rs       # yt-dlp wrapper + YouTube 2026 support
-│   ├── frames.rs         # ffmpeg frame extraction (5 engines)
-│   ├── scene.rs          # Scene detection (adaptive threshold)
-│   ├── dedup.rs          # Frame dedup (ffmpeg batch pipe)
-│   ├── transcript.rs     # JSON3/VTT subtitle parser
-│   ├── whisper.rs        # Groq/OpenAI API client (4 retries)
-│   ├── moments.rs        # LLM moment detection
-│   ├── moment_frames.rs  # Frame-moment matching
-│   ├── vision.rs         # Vision verification pipeline
-│   ├── vision_batch.rs   # Batch multi-frame analysis
-│   ├── corrections.rs    # Transcript corrections
-│   ├── synthesis.rs      # Grounded synthesis
-│   ├── stats.rs          # Analysis stats + token estimation
-│   ├── output.rs         # Markdown/JSON report generator
-│   ├── setup.rs          # Preflight checks
-│   ├── timestamp.rs      # Timestamp parsing
-│   └── error.rs          # Error types (thiserror)
-└── skill/
-    └── watch/
-        └── SKILL.md      # Hermes skill definition
+│   ├── main.rs             # Entry point
+│   ├── cli.rs              # clap CLI definition
+│   ├── config.rs           # Config loading (.env) + language whitelist
+│   ├── cache.rs            # Video/subtitle caching (SHA256, 10GB max)
+│   ├── download.rs         # yt-dlp wrapper + YouTube 2026 support
+│   ├── llm.rs              # LLM language detection (Groq → OpenAI)
+│   ├── pipeline.rs         # Pipeline orchestrator (9 steps)
+│   ├── frames/             # Frame extraction (module directory)
+│   │   ├── mod.rs          # Re-exports + auto-fps logic
+│   │   ├── keyframe.rs     # Keyframe extraction (-skip_frame nokey)
+│   │   ├── uniform.rs      # Uniform sampling
+│   │   ├── scene.rs        # Scene-based extraction + gap-fill
+│   │   ├── two_pass.rs     # Token-burner two-pass extraction
+│   │   ├── gap_fill.rs     # Fill gaps between scene cuts
+│   │   ├── metadata.rs     # ffprobe metadata extraction
+│   │   └── timestamp.rs    # Extract at specific timestamps
+│   ├── scene.rs            # Scene detection (adaptive threshold)
+│   ├── dedup.rs            # Frame dedup (ffmpeg batch pipe, 16x16 thumbs)
+│   ├── transcript.rs       # JSON3/VTT subtitle parser
+│   ├── whisper.rs          # Groq/OpenAI API client (4 retries)
+│   ├── moments.rs          # LLM moment detection + prompt generation
+│   ├── moment_frames.rs    # Frame-moment matching + vision pipeline
+│   ├── vision.rs           # Vision verification + batch analysis
+│   ├── corrections.rs      # Transcript corrections (punctuation-preserving)
+│   ├── synthesis.rs        # Grounded synthesis (transcript + visual evidence)
+│   ├── stats.rs            # Analysis stats + token estimation
+│   ├── output.rs           # Markdown/JSON report generator
+│   ├── setup.rs            # Preflight checks (binaries, API keys, permissions)
+│   ├── timestamp.rs        # Timestamp parsing (SS, MM:SS, HH:MM:SS)
+│   └── error.rs            # Error types (thiserror)
+└── tests/                  # Integration tests (669 LOC)
+    ├── test_cli.rs
+    ├── test_config.rs
+    ├── test_download.rs
+    ├── test_frames.rs
+    ├── test_output.rs
+    ├── test_timestamp.rs
+    └── test_transcript.rs
 ```
 
 ---
