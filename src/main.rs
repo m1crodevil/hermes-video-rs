@@ -54,7 +54,6 @@ async fn main() -> anyhow::Result<()> {
     // Step 2: Parse transcript from captions
     let mut transcript_segments: Vec<watch2::output::TranscriptSegment> = Vec::new();
     let mut transcript_source = String::from("none");
-
     if let Some(ref sub_path) = dl_result.subtitle_path {
         eprintln!("[watch2] parsing subtitles from {}", sub_path.display());
         match transcript::parse_subtitle_file(sub_path) {
@@ -66,6 +65,12 @@ async fn main() -> anyhow::Result<()> {
                 eprintln!("[watch2] subtitle parse error: {}", e);
             }
         }
+    }
+    // Filter transcript to focus range if specified
+    let focus_start = cli.start.as_deref().and_then(|s| parse_time(Some(s)));
+    let focus_end = cli.end.as_deref().and_then(|s| parse_time(Some(s)));
+    if focus_start.is_some() || focus_end.is_some() {
+        transcript_segments = transcript::filter_by_range(&transcript_segments, focus_start, focus_end);
     }
 
     // Step 3: Get video metadata
@@ -172,10 +177,17 @@ async fn main() -> anyhow::Result<()> {
                         focus_start, focus_end, !cli.no_dedup,
                     )?
                 }
-                DetailMode::Balanced | DetailMode::TokenBurner => {
+                DetailMode::Balanced => {
                     eprintln!("[watch2] engine: scene-or-uniform ({:.2} fps, cap: {})", fps, max_frames);
                     frames::extract_scene_or_uniform(
                         vp, &frames_dir, fps, max_frames, cli.resolution, max_frames,
+                        focus_start, focus_end, !cli.no_dedup,
+                    )?
+                }
+                DetailMode::TokenBurner => {
+                    eprintln!("[watch2] engine: two-pass ({:.2} fps, cap: {})", fps, max_frames);
+                    frames::extract_two_pass(
+                        vp, &frames_dir, fps, max_frames, cli.resolution,
                         focus_start, focus_end, !cli.no_dedup,
                     )?
                 }

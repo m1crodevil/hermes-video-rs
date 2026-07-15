@@ -116,6 +116,21 @@ fn dedupe(segments: Vec<TranscriptSegment>) -> Vec<TranscriptSegment> {
     out
 }
 
+/// Filter segments to only those overlapping [lo, hi].
+/// If both bounds are None, returns segments unchanged.
+pub fn filter_by_range(
+    segments: &[TranscriptSegment],
+    start: Option<f64>,
+    end: Option<f64>,
+) -> Vec<TranscriptSegment> {
+    let lo = start.unwrap_or(0.0);
+    let hi = end.unwrap_or(f64::INFINITY);
+    segments.iter()
+        .filter(|s| s.end >= lo && s.start <= hi)
+        .cloned()
+        .collect()
+}
+
 pub fn parse_subtitle_file(path: &Path) -> Result<Vec<TranscriptSegment>> {
     let content = std::fs::read_to_string(path)?;
     match path.extension().and_then(|e| e.to_str()) {

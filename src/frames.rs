@@ -472,8 +472,10 @@ pub fn extract_scene_or_uniform(
         }
     }
 
-    // Detect scene changes (uncapped — covers entire clip)
-    let timestamps = crate::scene::detect_scene_changes(video_path)?;
+    // Detect scene changes using adaptive threshold based on video duration
+    let meta_video = get_metadata(video_path)?;
+    let threshold = crate::scene::adaptive_threshold(meta_video.duration);
+    let timestamps = crate::scene::detect_scene_changes(video_path, threshold)?;
 
     if timestamps.len() >= SCENE_MIN_FRAMES {
         // --- Scene path: extract one frame per detected cut ---
@@ -530,6 +532,12 @@ pub fn extract_scene_or_uniform(
             deduped_count = crate::dedup::dedup_frames(&mut candidates);
         }
 
+        // Fill gaps between scene frames with uniform fill
+        candidates = fill_gaps_with_uniform(
+            &candidates, video_path, out_dir, resolution,
+            meta_video.duration, target_frames as usize,
+        )?;
+
         // Even-sample down to cap
         let cap = max_frames as usize;
         even_sample(&mut candidates, cap);
@@ -573,4 +581,156 @@ pub fn extract_scene_or_uniform(
         dropped_out_of_window: 0,
     };
     Ok((frames_out, meta))
+}
+
+/// Two-pass extraction for token-burner mode.
+/// Pass 1: Scene detection (uncapped)
+/// Pass 2: Uniform gap-filling at 50% density
+/// Merge + dedup for comprehensive coverage.
+pub fn extract_two_pass(
+    video_path: &Path,
+    out_dir: &Path,
+    fps: f32,
+    target_frames: u32,
+    resolution: u32,
+    start_seconds: Option<f64>,
+    end_seconds: Option<f64>,
+    dedup: bool,
+) -> Result<(Vec<FrameInfo>, FrameMeta)> {
+    std::fs::create_dir_all(out_dir)?;
+
+    // Clean previous frames
+    if out_dir.exists() {
+        for entry in std::fs::read_dir(out_dir)? {
+            let entry = entry?;
+            let p = entry.path();
+            if p.extension().map_or(false, |e| e == "jpg") {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
+
+    // PASS 1: Scene detection (uncapped)
+    let metadata = get_metadata(video_path)?;
+    let threshold = crate::scene::adaptive_threshold(metadata.duration);
+    let scene_timestamps = crate::scene::detect_scene_changes(video_path, threshold)?;
+
+    let mut scene_frames: Vec<FrameInfo> = Vec::new();
+    if !scene_timestamps.is_empty() {
+        let (frames, _) = extract_at_timestamps(
+            video_path, out_dir, &scene_timestamps, resolution, None,
+            start_seconds, end_seconds,
+        )?;
+        scene_frames = frames;
+    }
+
+    // PASS 2: Uniform gap-filling at 50% density
+    let fill_fps = fps * 0.5;
+    let fill_target = (target_frames / 2).max(1);
+    let uniform_frames = extract_frames(
+        video_path, out_dir, fill_fps, resolution, fill_target,
+    )?;
+
+    // Merge by timestamp
+    let mut all: Vec<FrameInfo> = scene_frames.into_iter()
+        .chain(uniform_frames.into_iter())
+        .collect();
+    all.sort_by(|a, b| a.timestamp.partial_cmp(&b.timestamp).unwrap());
+
+    // Dedup
+    let mut deduped_count = 0u32;
+    if dedup {
+        deduped_count = crate::dedup::dedup_frames(&mut all);
+    }
+
+    let selected = all.len();
+    let meta = FrameMeta {
+        engine: "two-pass".to_string(),
+        candidate_count: selected,
+        selected_count: selected,
+        deduped_count,
+        fallback: false,
+        dropped_out_of_window: 0,
+    };
+
+    Ok((all, meta))
+}
+
+/// Fill gaps between scene frames with uniform extraction.
+/// When gap between consecutive scene timestamps exceeds 2x expected interval,
+/// insert up to 5 fill frames uniformly within the gap.
+fn fill_gaps_with_uniform(
+    scene_frames: &[FrameInfo],
+    video_path: &std::path::Path,
+    out_dir: &std::path::Path,
+    resolution: u32,
+    duration: f64,
+    target_frames: usize,
+) -> Result<Vec<FrameInfo>> {
+    if scene_frames.len() < 2 {
+        return Ok(scene_frames.to_vec());
+    }
+
+    let expected_interval = duration / target_frames as f64;
+    let fill_threshold = 120.0_f64.min(expected_interval * 2.0);
+    let scale = scale_filter(resolution);
+
+    let mut fill_frames: Vec<FrameInfo> = Vec::new();
+    let mut fill_counter = 0u32;
+
+    for pair in scene_frames.windows(2) {
+        let gap = pair[1].timestamp - pair[0].timestamp;
+        if gap > fill_threshold {
+            let n_fill = ((gap / fill_threshold).floor() as usize).min(5);
+            if n_fill == 0 {
+                continue;
+            }
+
+            for i in 1..=n_fill {
+                let t = pair[0].timestamp + gap * (i as f64) / (n_fill as f64 + 1.0);
+                let out_path = out_dir.join(format!("fill_{:04}.jpg", fill_counter));
+
+                let status = std::process::Command::new("ffmpeg")
+                    .args([
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-ss",
+                        &format!("{t:.3}"),
+                        "-i",
+                        video_path.to_str().unwrap_or(""),
+                        "-frames:v",
+                        "1",
+                        "-vf",
+                        &scale,
+                        "-q:v",
+                        "4",
+                        out_path.to_str().unwrap_or(""),
+                    ])
+                    .status();
+
+                if status.map(|s| s.success()).unwrap_or(false) {
+                    fill_frames.push(FrameInfo {
+                        path: out_path.to_string_lossy().to_string(),
+                        timestamp: t,
+                        reason: "gap-fill".to_string(),
+                    });
+                    fill_counter += 1;
+                } else {
+                    eprintln!(
+                        "[watch2] warning: gap-fill frame at {t:.2}s failed, skipping"
+                    );
+                }
+            }
+        }
+    }
+
+    let mut all: Vec<FrameInfo> = scene_frames
+        .iter()
+        .chain(fill_frames.iter())
+        .cloned()
+        .collect();
+    all.sort_by(|a, b| a.timestamp.partial_cmp(&b.timestamp).unwrap());
+
+    Ok(all)
 }
