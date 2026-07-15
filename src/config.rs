@@ -37,6 +37,7 @@ pub fn get_language_name(code: &str) -> &str {
 /// Suggest the best subtitle language based on video language and available subtitles.
 ///
 /// Priority:
+/// 0. Pre-detected language from LLM (if provided)
 /// 1. Manual subs in the video's language
 /// 2. Auto-generated subs in the video's language
 /// 3. Manual English subs
@@ -46,7 +47,22 @@ pub fn suggest_subtitle_language(
     video_language: Option<&str>,
     available_manual: &[String],
     available_auto: &[String],
+    llm_detected: Option<&str>,
 ) -> String {
+    // 0. LLM-detected language (highest priority)
+    if let Some(lang) = llm_detected {
+        if !lang.is_empty() {
+            // Check if this language has any available subs
+            if available_manual.iter().any(|l| l == lang)
+                || available_auto.iter().any(|l| l == lang)
+            {
+                return lang.to_string();
+            }
+            // LLM said X but no subs available — still prefer it as fallback
+            // (will trigger Whisper if no subs found)
+        }
+    }
+
     let vid_lang = video_language.unwrap_or("en");
 
     // 1. Manual subs in video language

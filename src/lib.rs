@@ -6,6 +6,7 @@ pub mod dedup;
 pub mod download;
 pub mod error;
 pub mod frames;
+pub mod llm;
 pub mod output;
 pub mod scene;
 pub mod setup;

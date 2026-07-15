@@ -43,7 +43,7 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
 
     if is_url {
         eprintln!("[watch2] fetching metadata/captions...");
-        dl_result = download::fetch_captions(&cli.source, &download_dir, cli.cookies)?;
+        dl_result = download::fetch_captions(&cli.source, &download_dir, cli.cookies, None)?;
         // Store subtitles in cache
         if let Some(ref mut c) = cache {
             if let Some(ref sp) = dl_result.subtitle_path {
@@ -53,6 +53,20 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         }
     } else {
         dl_result = download::resolve_local(&cli.source)?;
+    }
+
+    // ── Step 1b: LLM language detection ────────────────────────────────
+    let mut llm_lang: Option<String> = None;
+    if is_url {
+        llm_lang = crate::llm::detect_language_llm(
+            &dl_result.info.title,
+            dl_result.info.description.as_deref(),
+            &config,
+        )
+        .await;
+        if let Some(ref lang) = llm_lang {
+            eprintln!("[watch2] LLM detected language: {}", lang);
+        }
     }
 
     // ── Step 2: Parse transcript from captions ──────────────────────────
@@ -130,7 +144,7 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         // Download if needed
         if video_path.is_none() && is_url {
             eprintln!("[watch2] downloading video...");
-            dl_result = download::download_video(&cli.source, &download_dir, cli.cookies)?;
+            dl_result = download::download_video(&cli.source, &download_dir, cli.cookies, llm_lang.as_deref())?;
             video_path = dl_result.video_path.clone();
 
             if let Some(ref vp) = video_path {
@@ -218,6 +232,7 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
             &mut key_moments_raw,
             &mut key_moment_stats,
             is_url,
+            llm_lang.as_deref(),
         );
         // Phase 2 may have failed, but we continue with what we have
         if let Err(e) = result {
@@ -587,6 +602,7 @@ fn run_transcript_moments_phase2(
     key_moments_raw: &mut Vec<serde_json::Value>,
     key_moment_stats: &mut Option<crate::output::KeyMomentStats>,
     is_url: bool,
+    llm_lang: Option<&str>,
 ) -> anyhow::Result<()> {
     let moments_path = work.join("key_moments.json");
     eprintln!(
@@ -609,7 +625,7 @@ fn run_transcript_moments_phase2(
     // Download video if needed
     if video_path.is_none() && is_url {
         eprintln!("[watch2] Downloading video for frame extraction...");
-        *dl_result = download::download_video(&cli.source, download_dir, cli.cookies)?;
+        *dl_result = download::download_video(&cli.source, download_dir, cli.cookies, llm_lang)?;
         *video_path = dl_result.video_path.clone();
         if let Some(vp) = video_path.as_ref() {
             if let Ok(meta) = frames::get_metadata(vp) {

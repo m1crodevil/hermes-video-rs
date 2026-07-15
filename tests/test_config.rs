@@ -31,7 +31,7 @@ fn test_suggest_subtitle_video_lang_manual_available() {
     let manual = vec!["en".to_string(), "id".to_string()];
     let auto = vec!["en".to_string()];
     assert_eq!(
-        suggest_subtitle_language(Some("id"), &manual, &auto),
+        suggest_subtitle_language(Some("id"), &manual, &auto, None),
         "id"
     );
 }
@@ -42,7 +42,7 @@ fn test_suggest_subtitle_video_lang_not_manual_fallback_en() {
     let manual = vec!["en".to_string(), "id".to_string()];
     let auto = vec!["en".to_string()];
     assert_eq!(
-        suggest_subtitle_language(Some("fr"), &manual, &auto),
+        suggest_subtitle_language(Some("fr"), &manual, &auto, None),
         "en"
     );
 }
@@ -53,7 +53,7 @@ fn test_suggest_subtitle_no_video_lang_default_en() {
     let manual = vec!["en".to_string(), "id".to_string()];
     let auto = vec!["en".to_string()];
     assert_eq!(
-        suggest_subtitle_language(None, &manual, &auto),
+        suggest_subtitle_language(None, &manual, &auto, None),
         "en"
     );
 }
@@ -64,7 +64,7 @@ fn test_suggest_subtitle_video_lang_auto_available() {
     let manual = vec!["en".to_string()];
     let auto = vec!["id".to_string(), "en".to_string()];
     assert_eq!(
-        suggest_subtitle_language(Some("id"), &manual, &auto),
+        suggest_subtitle_language(Some("id"), &manual, &auto, None),
         "id"
     );
 }
@@ -75,7 +75,7 @@ fn test_suggest_subtitle_no_match_fallback_video_lang() {
     let manual = vec!["ko".to_string()];
     let auto = vec!["zh".to_string()];
     assert_eq!(
-        suggest_subtitle_language(Some("ja"), &manual, &auto),
+        suggest_subtitle_language(Some("ja"), &manual, &auto, None),
         "ja"
     );
 }
@@ -87,7 +87,7 @@ fn test_suggest_subtitle_no_video_lang_no_en_fallback() {
     let manual = vec!["ko".to_string()];
     let auto = vec!["zh".to_string()];
     assert_eq!(
-        suggest_subtitle_language(None, &manual, &auto),
+        suggest_subtitle_language(None, &manual, &auto, None),
         "en"
     );
 }
@@ -98,7 +98,7 @@ fn test_suggest_subtitle_manual_en_only() {
     let manual = vec!["en".to_string()];
     let auto: Vec<String> = vec![];
     assert_eq!(
-        suggest_subtitle_language(Some("es"), &manual, &auto),
+        suggest_subtitle_language(Some("es"), &manual, &auto, None),
         "en"
     );
 }
@@ -109,7 +109,7 @@ fn test_suggest_subtitle_auto_en_only() {
     let manual: Vec<String> = vec![];
     let auto = vec!["en".to_string()];
     assert_eq!(
-        suggest_subtitle_language(Some("es"), &manual, &auto),
+        suggest_subtitle_language(Some("es"), &manual, &auto, None),
         "en"
     );
 }

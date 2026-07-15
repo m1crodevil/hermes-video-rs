@@ -220,7 +220,7 @@ fn list_available_subtitles(url: &str, use_cookies: bool) -> (Vec<String>, Vec<S
     (manual, auto)
 }
 
-pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool) -> Result<DownloadResult> {
+pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Option<&str>) -> Result<DownloadResult> {
     let url = sanitize_url(url);
     std::fs::create_dir_all(out_dir)?;
     let output_template = out_dir.join("video.%(ext)s").to_string_lossy().to_string();
@@ -250,6 +250,7 @@ pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool) -> Result<Do
         info.language.as_deref(),
         &manual_subs,
         &auto_subs,
+        llm_lang, // LLM detection passed via pipeline
     );
     if !is_valid_lang(&detected_lang) {
         eprintln!("[watch2] detected lang '{}' not in whitelist, falling back to en", detected_lang);
@@ -286,7 +287,7 @@ pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool) -> Result<Do
 
     match status {
         Ok(s) if s.success() => {
-            let subtitle_path = find_subtitle(out_dir);
+            let subtitle_path = find_subtitle(out_dir, &detected_lang);
             let info = extract_info(out_dir);
             let title = info.title.clone();
             Ok(DownloadResult {
@@ -306,14 +307,17 @@ pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool) -> Result<Do
 // download_video — full download with subtitles, YouTube 2026 opts
 // ---------------------------------------------------------------------------
 
-pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool) -> Result<DownloadResult> {
+pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Option<&str>) -> Result<DownloadResult> {
     let url = sanitize_url(url);
     std::fs::create_dir_all(out_dir)?;
     let output_template = out_dir.join("video.%(ext)s").to_string_lossy().to_string();
 
     let network_opts = ytdlp_network_opts(use_cookies);
 
-    // --- First pass: fetch metadata + subtitles for language detection ---
+    // --- First pass: fetch metadata only (for language detection) ---
+    // NOTE: Do NOT download subtitles here — pass 1 previously hardcoded "en.*"
+    // which caused cross-language subtitle conflicts when the detected language
+    // was different (e.g. Indonesian video with leftover English .json3 files).
     let mut meta_args: Vec<&str> = Vec::new();
     for opt in &network_opts {
         meta_args.push(opt.as_str());
@@ -321,15 +325,12 @@ pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool) -> Result<Do
     meta_args.extend([
         "--skip-download",
         "--write-info-json",
-        "--write-subs",
-        "--write-auto-subs",
-        "--sub-langs", "en.*",
-        "--sub-format", "json3/best",
         "--no-playlist",
         "--ignore-errors",
-        "--sleep-subtitles", "3",
-        "-o", &output_template,
-        "--", &url,
+        "-o",
+        &output_template,
+        "--",
+        &url,
     ]);
     let _ = Command::new("yt-dlp").args(&meta_args).status();
 
@@ -341,6 +342,7 @@ pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool) -> Result<Do
         info.language.as_deref(),
         &manual_subs,
         &auto_subs,
+        llm_lang, // LLM detection passed via pipeline
     );
     if !is_valid_lang(&detected_lang) {
         eprintln!("[watch2] detected lang '{}' not in whitelist, falling back to en", detected_lang);
@@ -353,6 +355,8 @@ pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool) -> Result<Do
     );
 
     // --- Second pass: full download with detected subtitle language ---
+    // Clean stale subtitles from any prior runs to avoid cross-language conflicts
+    clean_stale_subtitles(out_dir);
     let mut args: Vec<&str> = Vec::new();
     for opt in &network_opts {
         args.push(opt.as_str());
@@ -380,7 +384,7 @@ pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool) -> Result<Do
     match status {
         Ok(s) if s.success() => {
             let video_path = find_video(out_dir);
-            let subtitle_path = find_subtitle(out_dir);
+            let subtitle_path = find_subtitle(out_dir, &detected_lang);
             let info = extract_info(out_dir);
             let title = info.title.clone();
             Ok(DownloadResult {
@@ -463,14 +467,40 @@ fn find_video(dir: &Path) -> Option<PathBuf> {
     None
 }
 
-fn find_subtitle(dir: &Path) -> Option<PathBuf> {
+/// Find the best subtitle file in `dir`, preferring files matching `preferred_lang`.
+///
+/// Without a language filter this used to return whichever `.json3`/`.vtt` file
+/// `read_dir` happened to iterate first — non-deterministic and often wrong when
+/// multiple subtitle languages are present (e.g. English auto-subs from pass 1
+/// mixed with Indonesian subs from pass 2).
+fn find_subtitle(dir: &Path, preferred_lang: &str) -> Option<PathBuf> {
+    let mut candidates: Vec<(bool, PathBuf)> = Vec::new();
     for ext in &[".json3", ".vtt"] {
-        for entry in std::fs::read_dir(dir).ok()? {
-            let entry = entry.ok()?;
-            if entry.path().extension().map_or(false, |e| e == *ext) {
-                return Some(entry.path());
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.extension().map_or(false, |e| e == *ext) {
+                let name = path.file_name().unwrap().to_string_lossy();
+                // Match patterns like "video.id-orig.json3" or "video.id.json3"
+                let is_preferred = name.contains(&format!(".{}.", preferred_lang))
+                    || name.contains(&format!(".{}-", preferred_lang));
+                candidates.push((is_preferred, path));
             }
         }
     }
-    None
+    // Preferred language files first, then fall back to any subtitle file
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.into_iter().next().map(|(_, p)| p)
+}
+
+/// Remove stale subtitle files from a directory to avoid cross-language conflicts
+/// between yt-dlp passes.
+fn clean_stale_subtitles(dir: &Path) {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            if ext == "json3" || ext == "vtt" {
+                std::fs::remove_file(&path).ok();
+            }
+        }
+    }
 }
