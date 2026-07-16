@@ -71,9 +71,15 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Create working directory
-    let work = match &cli.out_dir {
-        Some(d) => PathBuf::from(d),
-        None => tempfile::tempdir()?.keep(),
+    // Security: Use RAII cleanup by default to prevent temp dir leaks
+    // _temp_dir lives until end of main() and auto-cleans on drop
+    let (work, _temp_dir) = match &cli.out_dir {
+        Some(d) => (PathBuf::from(d), None),
+        None => {
+            let td = tempfile::tempdir()?;
+            let path = td.path().to_path_buf();
+            (path, Some(td))
+        }
     };
     std::fs::create_dir_all(&work)?;
     eprintln!("[watch2] working dir: {}", work.display());
