@@ -141,8 +141,9 @@ impl WatchConfig {
     pub fn from_env() -> Self {
         let home = dirs::home_dir().unwrap_or_default();
         let config_dir = home.join(".config").join("watch");
+        // Security: Only load from explicit config path, never CWD
+        // CWD .env loading is a config injection vector (RUSTSEC-2021-0141 pattern)
         let _ = dotenvy::from_path(config_dir.join(".env"));
-        let _ = dotenvy::from_path(".env");
         let detail = match std::env::var("WATCH_DETAIL").unwrap_or_default().as_str() {
             "transcript" => DetailMode::Transcript,
             "transcript-moments" => DetailMode::TranscriptMoments,
