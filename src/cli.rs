@@ -1,5 +1,29 @@
 use clap::{Parser, ValueEnum};
 
+/// Validate max-frames: 1-1000 to prevent resource exhaustion
+fn validate_max_frames(s: &str) -> Result<u32, String> {
+    let val: u32 = s.parse().map_err(|_| format!("'{s}' is not a valid number"))?;
+    if val == 0 {
+        return Err("max-frames must be at least 1".to_string());
+    }
+    if val > 1000 {
+        return Err("max-frames capped at 1000 to prevent resource exhaustion".to_string());
+    }
+    Ok(val)
+}
+
+/// Validate resolution: 128-4096 pixels
+fn validate_resolution(s: &str) -> Result<u32, String> {
+    let val: u32 = s.parse().map_err(|_| format!("'{s}' is not a valid number"))?;
+    if val < 128 {
+        return Err("resolution must be at least 128 pixels".to_string());
+    }
+    if val > 4096 {
+        return Err("resolution capped at 4096 pixels".to_string());
+    }
+    Ok(val)
+}
+
 /// Watch a video and analyze it
 #[derive(Parser)]
 #[command(name = "watch", about = "Download, extract frames, and transcribe a video")]
@@ -11,12 +35,12 @@ pub struct Cli {
     #[arg(long)]
     pub detail: Option<DetailMode>,
 
-    /// Frame cap override
-    #[arg(long)]
+    /// Frame cap override (1-1000)
+    #[arg(long, value_parser = validate_max_frames)]
     pub max_frames: Option<u32>,
 
-    /// Frame width in pixels (default 512)
-    #[arg(long, default_value_t = 512)]
+    /// Frame width in pixels (128-4096, default 512)
+    #[arg(long, default_value_t = 512, value_parser = validate_resolution)]
     pub resolution: u32,
 
     /// Override auto-fps (max 2.0)
