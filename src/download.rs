@@ -110,7 +110,10 @@ pub fn resolve_local(path: &str) -> Result<DownloadResult> {
     let path = sanitize_url(path);
     let p = Path::new(&path)
         .canonicalize()
-        .map_err(|e| WatchError::Download(format!("File not found or not accessible '{}': {}", path, e)))?;
+        .map_err(|_| {
+            tracing::debug!("File not found: {} (full path: {})", path, path);
+            WatchError::Download(format!("File not found: {}", crate::error::sanitize_path(Path::new(&path))))
+        })?;
 
     // Check for common video/audio file extensions
     let valid_extensions = [

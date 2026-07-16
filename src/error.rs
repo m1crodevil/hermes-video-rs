@@ -25,3 +25,12 @@ pub enum WatchError {
 }
 
 pub type Result<T> = std::result::Result<T, WatchError>;
+
+/// Sanitize file path for user-facing error messages
+/// Shows only filename, not full path (prevents information disclosure)
+pub fn sanitize_path(path: &std::path::Path) -> String {
+    path.file_name()
+        .unwrap_or_else(|| path.as_os_str())
+        .to_string_lossy()
+        .to_string()
+}
