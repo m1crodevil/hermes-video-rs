@@ -98,6 +98,18 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         if !moments_path.exists() {
             if transcript_segments.is_empty() {
                 eprintln!("[watch2] ⚠️  TranscriptMoments requires a transcript. No subtitles found — falling through.");
+                // Check if .json3 files exist despite no transcript (detection bug indicator)
+                let has_stale_subs = download_dir.read_dir().map_or(false, |entries| {
+                    entries.flatten().any(|e| {
+                        let name = e.file_name().to_string_lossy().to_string();
+                        name.ends_with(".json3") || name.ends_with(".vtt")
+                    })
+                });
+                if has_stale_subs {
+                    eprintln!("[watch2] 💡 Subtitle files exist in {:?} but weren't detected.", download_dir);
+                    eprintln!("[watch2]    This may indicate a subtitle detection bug. Check manually:");
+                    eprintln!("[watch2]    ls {:?}", download_dir.join("video.*.json3"));
+                }
             } else {
                 return run_transcript_moments_phase1(
                     &cli,
