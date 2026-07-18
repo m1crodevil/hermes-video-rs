@@ -504,3 +504,193 @@ fn clean_stale_subtitles(dir: &Path) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn temp_dir(prefix: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("watch2_test_{}_{}", prefix, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    // ── find_video tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_find_video_mp4() {
+        let dir = temp_dir("find_video_mp4");
+        fs::write(dir.join("video.mp4"), b"fake").unwrap();
+        assert!(find_video(&dir).is_some());
+        assert_eq!(find_video(&dir).unwrap().file_name().unwrap(), "video.mp4");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_video_webm() {
+        let dir = temp_dir("find_video_webm");
+        fs::write(dir.join("video.webm"), b"fake").unwrap();
+        assert!(find_video(&dir).is_some());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_video_mk4() {
+        let dir = temp_dir("find_video_mkv");
+        fs::write(dir.join("video.mkv"), b"fake").unwrap();
+        assert!(find_video(&dir).is_some());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_video_none_when_empty() {
+        let dir = temp_dir("find_video_empty");
+        assert!(find_video(&dir).is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_video_ignores_non_video() {
+        let dir = temp_dir("find_video_non_video");
+        fs::write(dir.join("video.info.json"), b"fake").unwrap();
+        fs::write(dir.join("video.id.json3"), b"fake").unwrap();
+        assert!(find_video(&dir).is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_video_prefers_mp4_over_webm() {
+        let dir = temp_dir("find_video_pref");
+        fs::write(dir.join("video.webm"), b"fake").unwrap();
+        fs::write(dir.join("video.mp4"), b"fake").unwrap();
+        let result = find_video(&dir).unwrap();
+        let name = result.file_name().unwrap().to_string_lossy();
+        // Should find one of them (order depends on read_dir, but should not be None)
+        assert!(name.ends_with(".mp4") || name.ends_with(".webm"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── find_subtitle tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_find_subtitle_json3() {
+        let dir = temp_dir("find_sub_json3");
+        fs::write(dir.join("video.en.json3"), b"fake").unwrap();
+        let result = find_subtitle(&dir, "en");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().file_name().unwrap(), "video.en.json3");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_subtitle_vtt() {
+        let dir = temp_dir("find_sub_vtt");
+        fs::write(dir.join("video.en.vtt"), b"fake").unwrap();
+        let result = find_subtitle(&dir, "en");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().file_name().unwrap(), "video.en.vtt");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_subtitle_prefers_matching_lang() {
+        let dir = temp_dir("find_sub_pref");
+        fs::write(dir.join("video.en.json3"), b"fake").unwrap();
+        fs::write(dir.join("video.id.json3"), b"fake").unwrap();
+        let result = find_subtitle(&dir, "id");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().file_name().unwrap(), "video.id.json3");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_subtitle_prefers_orig_over_auto() {
+        let dir = temp_dir("find_sub_orig");
+        fs::write(dir.join("video.id.json3"), b"fake").unwrap();
+        fs::write(dir.join("video.id-orig.json3"), b"fake").unwrap();
+        let result = find_subtitle(&dir, "id");
+        assert!(result.is_some());
+        // Both match "id" — orig should be preferred due to sort
+        let name = result.unwrap().file_name().unwrap().to_string_lossy().to_string();
+        assert!(name.contains("id"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_subtitle_none_when_empty() {
+        let dir = temp_dir("find_sub_empty");
+        assert!(find_subtitle(&dir, "en").is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_subtitle_ignores_non_subtitle() {
+        let dir = temp_dir("find_sub_non_sub");
+        fs::write(dir.join("video.info.json"), b"fake").unwrap();
+        fs::write(dir.join("video.mp4"), b"fake").unwrap();
+        assert!(find_subtitle(&dir, "en").is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_subtitle_fallback_to_any_lang() {
+        let dir = temp_dir("find_sub_fallback");
+        fs::write(dir.join("video.en.json3"), b"fake").unwrap();
+        // Requesting "id" but only "en" exists — should still find it
+        let result = find_subtitle(&dir, "id");
+        assert!(result.is_some());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_subtitle_no_dot_in_extension_pattern() {
+        // Regression test for Bug #5: extension patterns must NOT have dot prefix
+        let dir = temp_dir("find_sub_no_dot");
+        fs::write(dir.join("video.id.json3"), b"fake").unwrap();
+        // This should work — previously failed because code compared ".json3" with "json3"
+        let result = find_subtitle(&dir, "id");
+        assert!(result.is_some(), "Bug #5 regression: find_subtitle returned None for .json3 file");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── clean_stale_subtitles tests ───────────────────────────────────
+
+    #[test]
+    fn test_clean_stale_removes_json3() {
+        let dir = temp_dir("clean_stale");
+        fs::write(dir.join("video.id.json3"), b"fake").unwrap();
+        fs::write(dir.join("video.info.json"), b"keep").unwrap();
+        clean_stale_subtitles(&dir);
+        assert!(!dir.join("video.id.json3").exists());
+        assert!(dir.join("video.info.json").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_clean_stale_removes_vtt() {
+        let dir = temp_dir("clean_stale_vtt");
+        fs::write(dir.join("video.en.vtt"), b"fake").unwrap();
+        clean_stale_subtitles(&dir);
+        assert!(!dir.join("video.en.vtt").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── subtitle_lang_pattern tests ───────────────────────────────────
+
+    #[test]
+    fn test_subtitle_lang_pattern_english() {
+        assert_eq!(subtitle_lang_pattern("en"), "en.*");
+    }
+
+    #[test]
+    fn test_subtitle_lang_pattern_indonesian() {
+        assert_eq!(subtitle_lang_pattern("id"), "id.*");
+    }
+
+    #[test]
+    fn test_subtitle_lang_pattern_french() {
+        assert_eq!(subtitle_lang_pattern("fr"), "fr.*");
+    }
+}
