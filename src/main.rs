@@ -20,12 +20,14 @@ async fn main() -> anyhow::Result<()> {
         if !setup_status.missing_binaries.is_empty() {
             eprintln!("❌ Missing required binaries: {}", setup_status.missing_binaries.join(", "));
             eprintln!("   Install: apt install ffmpeg  (Linux)");
+            std::process::exit(3);
         }
-        if !setup_status.has_api_key {
-            eprintln!("⚠️  No Whisper API key (GROQ_API_KEY or OPENAI_API_KEY)");
-            eprintln!("   Whisper fallback will be unavailable");
-        }
-        std::process::exit(3);
+    }
+    // API key check — warning only, not a blocker
+    if !setup_status.has_api_key && !cli.no_whisper {
+        eprintln!("⚠️  No Whisper API key (GROQ_API_KEY or OPENAI_API_KEY)");
+        eprintln!("   Whisper fallback will be unavailable");
+        eprintln!("   Use --no-whisper to suppress this warning");
     }
     if setup_status.first_run {
         eprintln!("ℹ️  First run detected");

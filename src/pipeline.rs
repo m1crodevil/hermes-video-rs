@@ -188,6 +188,20 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         .await;
     }
 
+    // ── Step 5b: Explain when no transcript and no whisper ──────────────
+    if transcript_segments.is_empty() {
+        if cli.no_whisper {
+            eprintln!("⚠️  No subtitles found for this video.");
+            eprintln!("   --no-whisper was set, so Whisper fallback was skipped.");
+            eprintln!("   No transcript will be available for this video.");
+        } else if !config.has_whisper_key() {
+            eprintln!("⚠️  No subtitles found for this video.");
+            eprintln!("   Whisper API key required for transcription.");
+            eprintln!("   Set GROQ_API_KEY or OPENAI_API_KEY in ~/.config/watch/.env");
+            eprintln!("   Or use --no-whisper to skip (no transcript available)");
+        }
+    }
+
     // ── Step 6: Filter transcript to focus range ────────────────────────
     if let (Some(start), Some(end)) = (
         cli.start.as_ref().and_then(|s| parse_time(Some(s))),

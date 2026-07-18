@@ -270,10 +270,26 @@ Automatically detects video language and selects best subtitles:
 
 Same as Python version: `~/.config/watch/.env`
 ```
-GROQ_API_KEY=gsk_...
-OPENAI_API_KEY=sk-...
+GROQ_API_KEY=gsk_...        # Optional — for Whisper fallback
+OPENAI_API_KEY=sk-...        # Optional — alternative Whisper provider
 WATCH_DETAIL=balanced
 SETUP_COMPLETE=true
+```
+
+### API Key (Optional)
+
+watch2 can run **without** a Whisper API key when subtitles are available via yt-dlp.
+
+- **With API key**: Whisper fallback available for videos without subtitles
+- **Without API key**: Only works with videos that have auto/manual captions
+- **`--no-whisper`**: Suppresses the "no API key" warning, skips Whisper entirely
+
+When no subtitles are found and no API key is set, watch2 prints a clear explanation:
+```
+⚠️  No subtitles found for this video.
+    Whisper API key required for transcription.
+    Set GROQ_API_KEY or OPENAI_API_KEY in ~/.config/watch/.env
+    Or use --no-whisper to skip (no transcript available)
 ```
 
 ## YouTube 2026 Support

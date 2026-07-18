@@ -42,7 +42,7 @@ pub fn check() -> SetupStatus {
         .map(|c| c.contains("SETUP_COMPLETE=true"))
         .unwrap_or(false);
     SetupStatus {
-        can_proceed: missing.is_empty() && has_key,
+        can_proceed: missing.is_empty(),
         first_run: !setup_complete,
         missing_binaries: missing,
         has_api_key: has_key,
