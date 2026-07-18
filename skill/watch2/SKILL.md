@@ -353,13 +353,13 @@ ls "$OUTDIR/download/"*.json3 "$OUTDIR/download/"*.vtt 2>/dev/null
 
 **If ffprobe shows valid duration but watch2 reports 0:** This is a bug in `frames/metadata.rs`. Report it on GitHub — do NOT work around with manual extraction.
 
-### Subtitle Detection Fails (Subtitles Exist But Not Found)
+### Subtitle Detection (Fixed in v4.4.0+)
 
-**Symptom**: watch2 says "no captions" but `ls` shows `.json3` or `.vtt` files in the download directory.
+**Previously**: watch2 could say "no captions" even when `.json3` files existed in the download directory. Root cause was `Path::extension()` returning `"json3"` (no dot) but code comparing with `".json3"` (with dot) — the comparison always failed.
 
-**Cause**: `find_subtitle()` uses non-deterministic `read_dir()` ordering. May pick wrong file or fail to find the correct subtitle.
+**Current status**: Fixed. `find_video()` and `find_subtitle()` now use correct extension patterns without dot prefix.
 
-**Workaround (Rust-native):**
+**If this still occurs** (shouldn't happen on v4.4.0+):
 ```bash
 # 1. Check what subtitle files exist
 ls -la /tmp/watch-XXX/download/*.json3 /tmp/watch-XXX/download/*.vtt
@@ -367,8 +367,7 @@ ls -la /tmp/watch-XXX/download/*.json3 /tmp/watch-XXX/download/*.vtt
 # 2. If files exist, try transcript mode directly
 watch2 "URL" --detail transcript --out-dir /tmp/watch-XXX
 
-# 3. If transcript mode also fails, the subtitle file may be corrupted
-# Report as bug — do NOT parse JSON3 with Python
+# 3. If transcript mode also fails, report as bug
 ```
 
 ### Video Not Cleaned Up After Processing
