@@ -96,6 +96,12 @@ When captions are available, this is the **fastest and most accurate** approach:
 - [ ] Step 1: Run `watch2 "<source>" --detail transcript-moments --min-moments 50 --out-dir <FIXED_DIR>`
   - First run: generates `moments_prompt.txt` (no video download, ~15s)
   - **CRITICAL: Use `--out-dir` to pin the working directory.** Without it, each run creates a new `/tmp/watch-XXXX` and `key_moments.json` from run 1 is lost on run 2.
+  - **VERIFICATION REQUIRED:** After Step 1, check that `<workdir>/moments_prompt.txt` exists. If it does NOT exist:
+    1. Check output for "No subtitles found — falling through"
+    2. Check if `.json3` files exist in `<workdir>/download/`
+    3. If `.json3` files exist → follow Manual Fallback Pipeline (parse transcript → identify moments → extract at timestamps)
+    4. If no `.json3` files → video has no captions, use `--detail balanced` instead
+    5. **NEVER shortcut to "scene detection → sample 21 evenly" when captions exist**
 - [ ] Step 2: Read `<workdir>/moments_prompt.txt`, analyze transcript, identify 50+ key moments
 - [ ] Step 3: Write moments as JSON to `<workdir>/key_moments.json`
 - [ ] Step 4: Re-run `watch2` with same args including `--out-dir <FIXED_DIR>` (video downloads + frames extracted at all moment timestamps)
