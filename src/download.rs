@@ -459,7 +459,7 @@ pub fn extract_info(dir: &Path) -> VideoInfo {
 // ---------------------------------------------------------------------------
 
 fn find_video(dir: &Path) -> Option<PathBuf> {
-    for ext in &[".mp4", ".mkv", ".webm", ".mov", ".m4a", ".mp3"] {
+    for ext in &["mp4", "mkv", "webm", "mov", "m4a", "mp3"] {
         for entry in std::fs::read_dir(dir).ok()? {
             let entry = entry.ok()?;
             if entry.path().extension().map_or(false, |e| e == *ext) {
@@ -473,12 +473,9 @@ fn find_video(dir: &Path) -> Option<PathBuf> {
 /// Find the best subtitle file in `dir`, preferring files matching `preferred_lang`.
 ///
 /// Without a language filter this used to return whichever `.json3`/`.vtt` file
-/// `read_dir` happened to iterate first — non-deterministic and often wrong when
-/// multiple subtitle languages are present (e.g. English auto-subs from pass 1
-/// mixed with Indonesian subs from pass 2).
 fn find_subtitle(dir: &Path, preferred_lang: &str) -> Option<PathBuf> {
     let mut candidates: Vec<(bool, PathBuf)> = Vec::new();
-    for ext in &[".json3", ".vtt"] {
+    for ext in &["json3", "vtt"] {
         for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
             let path = entry.path();
             if path.extension().map_or(false, |e| e == *ext) {
