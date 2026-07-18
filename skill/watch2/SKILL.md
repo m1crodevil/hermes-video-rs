@@ -1,6 +1,6 @@
 ---
 name: watch2
-version: "4.2.0"
+version: "4.4.0"
 description: "Watch a video (URL or local path). Rust-powered analysis with frame extraction and transcript generation."
 argument-hint: " <url-or-path> [question]"
 allowed-tools: Bash, Read, AskUserQuestion
@@ -136,6 +136,20 @@ watch2 "<source>" --detail balanced
 ```
 
 Then sample ~21 frames evenly and `vision_analyze` strategically.
+
+### Frame Count Verification Gate (MANDATORY)
+
+**After ANY frame extraction method (watch2 automatic OR manual ffmpeg), BEFORE proceeding to vision analysis:**
+
+1. Count extracted frames: `ls <workdir>/frames/*.jpg | wc -l`
+2. **If count < 21**: STOP. Do NOT proceed with vision analysis on fewer than 21 frames.
+3. Fix the extraction first:
+   - If watch2 failed → use manual ffmpeg with calculated fps (duration ÷ 21)
+   - If scene detection too few → switch to uniform extraction
+   - If video is short (<3 min) → extract at every 5 seconds
+4. Re-count. Only proceed when ≥21 frames confirmed.
+
+**Why 21 minimum**: Fewer frames = blind spots in visual analysis. A 7-minute video needs at least one frame every 20 seconds to catch all visual context. Skipping this produces shallow, unreliable analysis.
 
 ## CLI Options
 
@@ -365,6 +379,8 @@ ls "$OUTDIR/download/"*.json3 "$OUTDIR/download/"*.vtt 2>/dev/null
 
 **Current status**: Fixed. `find_video()` and `find_subtitle()` now use correct extension patterns without dot prefix.
 
+**Rust gotcha for future contributors:** `std::path::Path::extension()` returns the extension WITHOUT the dot (`"json3"`, not `".json3"`). Always compare against `"json3"`, never `".json3"`. This bug existed for months because the code "looked correct" — the dot prefix is a natural assumption from other languages (Python's `os.path.splitext` returns with dot).
+
 **If this still occurs** (shouldn't happen on v4.4.0+):
 ```bash
 # 1. Check what subtitle files exist
@@ -407,9 +423,17 @@ Analyzing all 30+ frames is expensive (30 API calls). Sample strategically unles
 
 **Why this matters**: Auto-captions (especially non-English) contain errors — misspelled proper nouns, garbled names, incorrect claims. The transcript-moments pipeline catches these by combining transcript intelligence with visual verification.
 
+**When transcript-moments falls through**: If watch2 reports "No subtitles found" despite `.json3` files existing (Bug #5 or similar), do NOT fall back to scene detection. Instead:
+1. Parse the `.json3` transcript manually (use the JSON3 parser from the Manual Fallback Pipeline)
+2. Analyze the transcript to identify 50+ key moments with timestamps
+3. Extract frames at those specific timestamps using `--timestamps` flag or manual ffmpeg
+4. Vision-analyze those targeted frames
+
+This is the Manual Fallback Pipeline — it produces equivalent output to transcript-moments at the cost of more manual steps. Never shortcut to "scene detection → sample 21 evenly" when captions exist.
+
 ### Finding Top Moments in Transcript
 
-After watch2 extracts the transcript, use `search_files` with regex to find the most dramatic/impactful moments:
+After extracting the transcript (either from watch2 or manual JSON3 parsing), use `search_files` with regex to find the most dramatic/impactful moments:
 
 ```bash
 search_files \
