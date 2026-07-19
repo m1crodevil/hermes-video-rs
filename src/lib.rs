@@ -9,6 +9,7 @@ pub mod frames;
 pub mod llm;
 pub mod output;
 pub mod scene;
+pub mod scene_detect;
 pub mod setup;
 pub mod timestamp;
 pub mod transcript;
