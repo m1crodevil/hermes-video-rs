@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::process::Command;
 
-use crate::error::{WatchError, Result};
+use crate::error::{Result, WatchError};
 
 /// A single scene segment with frame-accurate boundaries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,17 +54,15 @@ pub fn parse_av_scenechange_output(json: &str, fps: f64) -> Vec<SceneBoundary> {
         let start_sec = frame as f64 / fps;
         let end_sec = frames.get(i + 1).map_or(f64::INFINITY, |&f| f as f64 / fps);
         let frame_end = frames.get(i + 1).copied().unwrap_or(0);
-        boundaries.push(SceneBoundary::new(start_sec, end_sec, fps, frame, frame_end));
+        boundaries.push(SceneBoundary::new(
+            start_sec, end_sec, fps, frame, frame_end,
+        ));
     }
     boundaries
 }
 
 /// Convert existing timestamp list (from ffmpeg scene filter) to SceneBoundary list.
-pub fn timestamps_to_boundaries(
-    timestamps: &[f64],
-    fps: f64,
-    duration: f64,
-) -> Vec<SceneBoundary> {
+pub fn timestamps_to_boundaries(timestamps: &[f64], fps: f64, duration: f64) -> Vec<SceneBoundary> {
     let mut boundaries = Vec::with_capacity(timestamps.len());
     for (i, &ts) in timestamps.iter().enumerate() {
         let end_ts = timestamps.get(i + 1).copied().unwrap_or(duration);
@@ -77,50 +75,28 @@ pub fn timestamps_to_boundaries(
 
 /// Check if av-scenechange binary is available.
 pub fn is_available() -> bool {
-    Command::new("av-scenechange")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    which::which("av-scenechange").is_ok()
 }
 
-/// Detect scenes using av-scenechange (preferred) or ffmpeg (fallback).
-/// Returns SceneDetectionResult with boundaries sorted by start_sec.
-pub fn detect(
-    video_path: &Path,
-    fps: f64,
-    duration: f64,
-) -> Result<SceneDetectionResult> {
-    let start = std::time::Instant::now();
-
-    if is_available() {
-        match detect_with_av_scenechange(video_path, fps, duration) {
-            Ok(mut result) => {
-                result.detection_time_ms = start.elapsed().as_millis() as u64;
-                Ok(result)
-            }
-            Err(e) => {
-                eprintln!("[watch2] av-scenechange failed: {}, falling back to ffmpeg", e);
-                detect_with_ffmpeg_fallback(video_path, fps, duration, start)
-            }
-        }
-    } else {
-        eprintln!("[watch2] av-scenechange not found, using ffmpeg fallback");
-        detect_with_ffmpeg_fallback(video_path, fps, duration, start)
+/// Detect scenes using av-scenechange (mandatory).
+/// Returns error if av-scenechange is not installed.
+pub fn detect(video_path: &Path, fps: f64, _duration: f64) -> Result<SceneDetectionResult> {
+    if !is_available() {
+        return Err(WatchError::Ffmpeg(
+            "av-scenechange is required but not found. Install: cargo install av-scenechange --features ffmpeg".to_string()
+        ));
     }
+
+    let start = std::time::Instant::now();
+    let result = detect_with_av_scenechange(video_path, fps)?;
+    let mut result = result;
+    result.detection_time_ms = start.elapsed().as_millis() as u64;
+    Ok(result)
 }
 
-fn detect_with_av_scenechange(
-    video_path: &Path,
-    fps: f64,
-    _duration: f64,
-) -> Result<SceneDetectionResult> {
+fn detect_with_av_scenechange(video_path: &Path, fps: f64) -> Result<SceneDetectionResult> {
     let output = Command::new("av-scenechange")
-        .args([
-            "--features", "ffmpeg",
-            "--min-scenecut", "24",
-            video_path.to_str().unwrap_or(""),
-        ])
+        .args(["--min-scenecut", "24", video_path.to_str().unwrap_or("")])
         .output()
         .map_err(|e| WatchError::Ffmpeg(format!("av-scenechange failed to run: {e}")))?;
 
@@ -135,19 +111,19 @@ fn detect_with_av_scenechange(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let boundaries = parse_av_scenechange_output(&stdout, fps);
 
-    Ok(SceneDetectionResult { boundaries, fps, detection_time_ms: 0 })
+    Ok(SceneDetectionResult {
+        boundaries,
+        fps,
+        detection_time_ms: 0,
+    })
 }
 
-fn detect_with_ffmpeg_fallback(
-    video_path: &Path,
-    fps: f64,
-    duration: f64,
-    start: std::time::Instant,
-) -> Result<SceneDetectionResult> {
-    let threshold = crate::scene::adaptive_threshold(duration);
-    let timestamps = crate::scene::detect_scene_changes(video_path, threshold)?;
-    let boundaries = timestamps_to_boundaries(&timestamps, fps, duration);
-    let elapsed = start.elapsed().as_millis() as u64;
-
-    Ok(SceneDetectionResult { boundaries, fps, detection_time_ms: elapsed })
+/// Convert timestamp list to SceneBoundary list (kept for external callers).
+pub fn detect_from_timestamps(timestamps: &[f64], fps: f64, duration: f64) -> SceneDetectionResult {
+    let boundaries = timestamps_to_boundaries(timestamps, fps, duration);
+    SceneDetectionResult {
+        boundaries,
+        fps,
+        detection_time_ms: 0,
+    }
 }

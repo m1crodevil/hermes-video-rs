@@ -52,7 +52,7 @@ pub fn check() -> SetupStatus {
 
 fn check_binaries() -> Vec<String> {
     let mut missing = Vec::new();
-    for bin in &["ffmpeg", "ffprobe", "yt-dlp"] {
+    for bin in &["ffmpeg", "ffprobe", "yt-dlp", "av-scenechange"] {
         if which(bin).is_err() {
             missing.push(bin.to_string());
         }
