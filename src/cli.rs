@@ -123,6 +123,10 @@ pub struct Cli {
     #[arg(long)]
     pub fuse_scenes: bool,
 
+    /// Skip scene detection entirely (use frame extraction metadata for scene count)
+    #[arg(long)]
+    pub no_scene_detection: bool,
+
     /// Minimum ASR confidence to auto-include as moment candidate (below = candidate)
     #[arg(long, default_value = "70")]
     pub confidence_threshold: i32,

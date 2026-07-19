@@ -57,22 +57,41 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
 
     // ── Step 1b: LLM language detection ────────────────────────────────
     // Skip LLM when metadata already has language (saves ~1-2s + API cost)
+    // Also check cache for previously detected language
     let mut llm_lang: Option<String> = None;
     if is_url {
-        if let Some(ref lang) = dl_result.info.language {
-            // Metadata already has language — skip LLM
-            eprintln!("[watch2] language from metadata: {}", lang);
-            llm_lang = Some(lang.clone());
-        } else {
-            // No language in metadata — try LLM detection
-            llm_lang = crate::llm::detect_language_llm(
-                &dl_result.info.title,
-                dl_result.info.description.as_deref(),
-                &config,
-            )
-            .await;
-            if let Some(ref lang) = llm_lang {
-                eprintln!("[watch2] LLM detected language: {}", lang);
+        // First check cache for previously detected language
+        if let Some(ref mut c) = cache {
+            if let Some(lang) = c.get_cached_language(&cli.source) {
+                eprintln!("[watch2] language from cache: {}", lang);
+                llm_lang = Some(lang);
+            }
+        }
+
+        // If not in cache, check metadata
+        if llm_lang.is_none() {
+            if let Some(ref lang) = dl_result.info.language {
+                // Metadata already has language — skip LLM
+                eprintln!("[watch2] language from metadata: {}", lang);
+                llm_lang = Some(lang.clone());
+            } else {
+                // No language in metadata — try LLM detection
+                llm_lang = crate::llm::detect_language_llm(
+                    &dl_result.info.title,
+                    dl_result.info.description.as_deref(),
+                    &config,
+                )
+                .await;
+                if let Some(ref lang) = llm_lang {
+                    eprintln!("[watch2] LLM detected language: {}", lang);
+                }
+            }
+        }
+
+        // Store detected language in cache
+        if let Some(ref lang) = llm_lang {
+            if let Some(ref mut c) = cache {
+                let _ = c.store_language(&cli.source, lang);
             }
         }
     }
@@ -214,8 +233,12 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
     // ── Step 4b: Scene detection (only for fusion — skipped otherwise) ──
     // Scene count for report is already available from frame extraction (FrameMeta).
     // We only need av-scenechange for fusion (scene + transcript alignment).
+    // Skip entirely if --no-scene-detection is set.
     let has_key_moments = detail == DetailMode::TranscriptMoments && work.join("key_moments.json").exists();
-    if cli.fuse_scenes && detail != DetailMode::Transcript && !has_key_moments {
+    if cli.no_scene_detection {
+        eprintln!("[watch2] scene detection skipped (--no-scene-detection)");
+        scene_count = Some(frame_meta.candidate_count);
+    } else if cli.fuse_scenes && detail != DetailMode::Transcript && !has_key_moments {
         if let Some(ref vp) = video_path {
             run_scene_detection(vp, &transcript_segments, cli.fuse_scenes, cli.fps,
                 &mut scene_text, &mut fusion_text, &mut fused_moments, &mut scene_count, &mut scene_boundaries);

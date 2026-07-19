@@ -196,7 +196,7 @@ impl VideoCache {
         if !path.exists() {
             return None;
         }
-        let data = std::fs::read_to_string(&path).ok()?;
+        let data = std::fs::read_to_string(path).ok()?;
         serde_json::from_str(&data).ok()
     }
 
@@ -204,8 +204,7 @@ impl VideoCache {
     pub fn store_info(&mut self, url: &str, info: &VideoInfo) -> Result<()> {
         let key = Self::cache_key(url);
         let dir = self.cache_dir(&key);
-        std::fs::create_dir_all(&dir)?;
-
+        std::fs::create_dir_all(&dir)?;  // Ensure directory exists
         let path = dir.join("info.json");
         let data = serde_json::to_string_pretty(info)?;
         std::fs::write(&path, data)?;
@@ -224,8 +223,27 @@ impl VideoCache {
         entry.accessed_at = now_unix();
         entry.title = Some(info.title.clone());
         entry.size_bytes = calc_dir_size(&dir);
-        self.save_manifest()?;
 
+        self.save_manifest()?;
+        Ok(())
+    }
+
+    // ── Language Cache ──────────────────────────────────────────────
+
+    /// Get cached detected language for a URL.
+    pub fn get_cached_language(&self, url: &str) -> Option<String> {
+        let key = Self::cache_key(url);
+        let path = self.cache_dir(&key).join("language.txt");
+        std::fs::read_to_string(path).ok()
+    }
+
+    /// Store detected language in cache.
+    pub fn store_language(&mut self, url: &str, lang: &str) -> Result<()> {
+        let key = Self::cache_key(url);
+        let dir = self.cache_dir(&key);
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("language.txt");
+        std::fs::write(&path, lang)?;
         Ok(())
     }
 
