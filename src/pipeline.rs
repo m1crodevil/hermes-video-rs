@@ -182,6 +182,16 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         }
     }
 
+    // Fallback: use metadata duration from yt-dlp if ffprobe didn't work
+    if duration <= 0.0 {
+        if let Some(meta_dur) = dl_result.info.duration {
+            if meta_dur > 0.0 {
+                duration = meta_dur;
+                eprintln!("[watch2] duration from metadata: {:.1}s", duration);
+            }
+        }
+    }
+
     // ── Step 4: Frame extraction ────────────────────────────────────────
     let mut frame_vec: Vec<FrameInfo> = Vec::new();
     let mut frames_dropped = 0u32;
