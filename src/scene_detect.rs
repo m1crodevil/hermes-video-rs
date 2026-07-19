@@ -78,7 +78,8 @@ pub fn is_available() -> bool {
     which::which("av-scenechange").is_ok()
 }
 
-/// Detect scenes using av-scenechange (mandatory).
+/// Detect scenes using av-scenechange.
+/// Uses --speed 1 for faster detection (acceptable for balanced mode).
 /// Returns error if av-scenechange is not installed.
 pub fn detect(video_path: &Path, fps: f64, _duration: f64) -> Result<SceneDetectionResult> {
     if !is_available() {
@@ -95,8 +96,9 @@ pub fn detect(video_path: &Path, fps: f64, _duration: f64) -> Result<SceneDetect
 }
 
 fn detect_with_av_scenechange(video_path: &Path, fps: f64) -> Result<SceneDetectionResult> {
+    // Use --speed 1 for faster detection (3x faster, acceptable quality for balanced mode)
     let output = Command::new("av-scenechange")
-        .args(["--min-scenecut", "24", video_path.to_str().unwrap_or("")])
+        .args(["--speed", "1", "--min-scenecut", "24", video_path.to_str().unwrap_or("")])
         .output()
         .map_err(|e| WatchError::Ffmpeg(format!("av-scenechange failed to run: {e}")))?;
 

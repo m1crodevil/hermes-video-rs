@@ -211,15 +211,18 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         }
     }
 
-    // ── Step 4b: Scene detection (mandatory for all modes with video) ───
-    // Runs after frame extraction. For transcript-moments, also runs in Phase 2.
-    // Skip if Phase 2 already ran scene detection (transcript-moments mode).
+    // ── Step 4b: Scene detection (only for fusion — skipped otherwise) ──
+    // Scene count for report is already available from frame extraction (FrameMeta).
+    // We only need av-scenechange for fusion (scene + transcript alignment).
     let has_key_moments = detail == DetailMode::TranscriptMoments && work.join("key_moments.json").exists();
-    if detail != DetailMode::Transcript && !has_key_moments {
+    if cli.fuse_scenes && detail != DetailMode::Transcript && !has_key_moments {
         if let Some(ref vp) = video_path {
             run_scene_detection(vp, &transcript_segments, cli.fuse_scenes, cli.fps,
                 &mut scene_text, &mut fusion_text, &mut fused_moments, &mut scene_count, &mut scene_boundaries);
         }
+    } else if detail != DetailMode::Transcript && detail != DetailMode::TranscriptMoments {
+        // For non-fusion modes, derive scene count from frame extraction metadata
+        scene_count = Some(frame_meta.candidate_count);
     }
 
     // ── Step 5: Whisper fallback ────────────────────────────────────────
