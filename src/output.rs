@@ -55,6 +55,10 @@ pub struct WatchReport {
     pub key_moments: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_moment_stats: Option<KeyMomentStats>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fused_moments: Option<Vec<crate::fusion::FusedMoment>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scene_count: Option<usize>,
 }
 
 impl WatchReport {
@@ -139,6 +143,8 @@ mod tests {
             warnings: vec![],
             key_moments: None,
             key_moment_stats: None,
+            fused_moments: None,
+            scene_count: None,
         };
         let md = report.to_markdown();
         assert!(md.contains("# Test"));

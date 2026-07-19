@@ -18,6 +18,8 @@ fn make_test_report() -> WatchReport {
         warnings: vec!["Test warning".into()],
         key_moments: None,
         key_moment_stats: None,
+        fused_moments: None,
+        scene_count: None,
     }
 }
 
@@ -62,6 +64,8 @@ fn make_full_report() -> WatchReport {
         warnings: vec!["Warning one".into(), "Warning two".into()],
         key_moments: None,
         key_moment_stats: None,
+        fused_moments: None,
+        scene_count: None,
     }
 }
 

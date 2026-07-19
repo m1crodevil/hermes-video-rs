@@ -92,6 +92,40 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
             transcript::filter_by_range(&transcript_segments, focus_start, focus_end);
     }
 
+    // ── Step 2b: Scene detection (fused mode) ──────────────────────────────
+    let mut fused_moments: Vec<crate::fusion::FusedMoment> = Vec::new();
+    let mut scene_text = String::new();
+    let mut fusion_text = String::new();
+    let mut scene_count: Option<usize> = None;
+
+    if cli.fuse_scenes && !transcript_segments.is_empty() {
+        if let Some(ref vp) = dl_result.video_path {
+            eprintln!("[watch2] Running fused scene+transcript analysis...");
+            let meta = frames::get_metadata(vp);
+            let dur = meta.as_ref().map(|m| m.duration).unwrap_or(0.0);
+            // Use cli.fps if set, otherwise default to 30.0 for scene detection
+            let fps = cli.fps.unwrap_or(30.0) as f64;
+
+            match crate::scene_detect::detect(vp, fps, dur) {
+                Ok(result) => {
+                    eprintln!("[watch2] Detected {} scenes ({}ms)", result.total_scenes(), result.detection_time_ms);
+                    scene_text = crate::fusion::format_scene_changes_for_prompt(&result.boundaries);
+                    fused_moments = crate::fusion::fuse_scenes_and_transcript(
+                        &result.boundaries,
+                        &transcript_segments,
+                        dur,
+                    );
+                    fusion_text = crate::fusion::format_fusion_data_for_prompt(&fused_moments);
+                    scene_count = Some(result.total_scenes());
+                    eprintln!("[watch2] {} fused moments generated", fused_moments.len());
+                }
+                Err(e) => {
+                    eprintln!("[watch2] Scene detection failed: {}", e);
+                }
+            }
+        }
+    }
+
     // ── Phase 1: TranscriptMoments — first run (generate prompt & exit) ─
     if detail == DetailMode::TranscriptMoments {
         let moments_path = work.join("key_moments.json");
@@ -118,6 +152,8 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
                     &transcript_segments,
                     &transcript_source,
                     &dl_result,
+                    &scene_text,
+                    &fusion_text,
                 );
             }
         }
@@ -284,6 +320,8 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         focused,
         key_moments_raw,
         key_moment_stats,
+        fused_moments,
+        scene_count,
     );
 
     // ── Step 9: Show stats ──────────────────────────────────────────────
@@ -510,6 +548,8 @@ fn run_transcript_moments_phase1(
     transcript_segments: &[crate::output::TranscriptSegment],
     transcript_source: &str,
     dl_result: &download::DownloadResult,
+    scene_text: &str,
+    fusion_text: &str,
 ) -> anyhow::Result<WatchReport> {
     eprintln!("[watch2] Phase 1: Generating moment detection prompt...");
     let transcript_text =
@@ -536,6 +576,23 @@ fn run_transcript_moments_phase1(
     eprintln!("  3. Re-run this command to extract frames at those moments");
     eprintln!();
 
+    // Generate fused prompt if scene data is available
+    if !scene_text.is_empty() {
+        let fused_prompt = crate::moments::generate_fused_prompt(
+            &transcript_text,
+            fusion_text,
+            scene_text,
+            &dl_result.info.title,
+            dl_result.info.uploader.as_deref().unwrap_or("Unknown"),
+            dl_result.info.duration.unwrap_or(0.0),
+            cli.max_moments,
+            cli.min_moments,
+        );
+        let fused_prompt_path = work.join("fused_moments_prompt.txt");
+        std::fs::write(&fused_prompt_path, &fused_prompt)?;
+        eprintln!("[watch2] ✅ Fused prompt written to {}", fused_prompt_path.display());
+    }
+
     let title = if dl_result.title.is_empty() || dl_result.title == "Unknown" {
         cli.source.clone()
     } else {
@@ -558,6 +615,8 @@ fn run_transcript_moments_phase1(
         warnings: vec!["Phase 1 complete — waiting for key_moments.json".into()],
         key_moments: None,
         key_moment_stats: None,
+        fused_moments: None,
+        scene_count: None,
     })
 }
 
@@ -760,6 +819,8 @@ fn build_report(
     focused: bool,
     key_moments_raw: Vec<serde_json::Value>,
     key_moment_stats: Option<crate::output::KeyMomentStats>,
+    fused_moments: Vec<crate::fusion::FusedMoment>,
+    scene_count: Option<usize>,
 ) -> WatchReport {
     let mut warnings = Vec::new();
 
@@ -823,5 +884,7 @@ fn build_report(
             Some(key_moments_raw)
         },
         key_moment_stats,
+        fused_moments: if fused_moments.is_empty() { None } else { Some(fused_moments) },
+        scene_count,
     }
 }

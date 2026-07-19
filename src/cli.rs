@@ -114,6 +114,18 @@ pub struct Cli {
     /// Custom cache directory
     #[arg(long)]
     pub cache_dir: Option<String>,
+
+    /// Use av-scenechange for scene detection (faster than ffmpeg)
+    #[arg(long)]
+    pub use_av_scenechange: bool,
+
+    /// Fuse scene boundaries with transcript for better moment detection
+    #[arg(long)]
+    pub fuse_scenes: bool,
+
+    /// Minimum ASR confidence to auto-include as moment candidate (below = candidate)
+    #[arg(long, default_value = "70")]
+    pub confidence_threshold: i32,
 }
 
 #[derive(Clone, Debug, PartialEq, ValueEnum)]
