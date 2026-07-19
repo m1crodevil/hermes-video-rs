@@ -1,6 +1,8 @@
 # /watch2
 
-> Rust-powered video analysis for Hermes Agent.
+> **It watches. It listens. It verifies.**
+> Rust-powered video analysis that *sees* frames and *reads* transcripts — then cross-references both to catch what either one misses.
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-2024+-orange.svg)](https://www.rust-lang.org/)
 [![Hermes Agent](https://img.shields.io/badge/Hermes-Agent-purple)](https://hermes-agent.nousresearch.com)
@@ -8,13 +10,13 @@
 
 **Rust rewrite of [hermes-video](https://github.com/m1crodevil/hermes-video)** — same features, 100× faster startup, single binary.
 
-With `/watch2`, you paste a URL or a local path, ask a question, and Hermes fetches captions, downloads only what it needs, extracts frames, pulls a timestamped transcript, and analyzes everything. By the time it answers, it has *seen* the video and *heard* the audio.
+Paste a URL or a local path. Hermes fetches captions, downloads only what it needs, extracts frames at the moments that matter, and cross-references the transcript against what's actually on screen. Auto-captions misspell names? It catches that. A claim doesn't match the visual? It flags that. By the time it answers, it has *seen* the video, *heard* the audio, and *verified* the facts.
 
 ```bash
 hermes skill install watch2
 ```
 
-Zero config to start. `yt-dlp` and `ffmpeg` are the only runtime dependencies. Captions cover most public videos for free. Whisper API key is only needed when a video has no captions.
+Zero config to start. `yt-dlp`, `ffmpeg`, and `av-scenechange` are the only runtime dependencies. Captions cover most public videos for free. Whisper API key is only needed when a video has no captions.
 
 ---
 
@@ -24,9 +26,9 @@ Zero config to start. `yt-dlp` and `ffmpeg` are the only runtime dependencies. C
 |---|---|---|
 | **Startup** | ~500ms (Python import) | ~5ms |
 | **Memory** | ~50-100MB | ~5-15MB |
-| **Binary** | 0 (needs Python runtime) | 5.4MB self-contained |
-| **Install** | pip + yt-dlp + ffmpeg | Single binary + yt-dlp + ffmpeg |
-| **Tests** | 1,379 LOC | 669 LOC (174 passing) |
+| **Binary** | 0 (needs Python runtime) | 6.0MB self-contained |
+| **Install** | pip + yt-dlp + ffmpeg | Single binary + yt-dlp + ffmpeg + av-scenechange |
+| **Tests** | 1,379 LOC | 8,203 LOC (211 passing) |
 
 ---
 
@@ -42,7 +44,9 @@ Zero config to start. `yt-dlp` and `ffmpeg` are the only runtime dependencies. C
 
 **Turn a playlist into notes.** `/watch2 https://youtu.be/ summarize this to a note` Run it across a series and file a per-video summary, so a channel or course becomes a searchable set of notes instead of hours you have to sit through.
 
-**Verify transcript accuracy with visual evidence.** `/watch2 https://youtu.be/ --auto-moments` Automatically identifies moments in the transcript that need visual verification (proper nouns, game names, claims, deictic references), extracts frames at those timestamps, and validates the transcript against what's actually shown on screen.
+**Catch what captions get wrong.** `/watch2 https://youtu.be/abc --detail transcript-moments` Auto-captions misspell names, garble proper nouns, mishear numbers. The transcript-moments pipeline identifies50+ key moments, extracts frames at those timestamps, and cross-references the transcript against what's actually on screen. Corrections are grounded in visual evidence, not guesses.
+
+**Verify transcript accuracy with visual evidence.** `/watch2 https://youtu.be/abc --auto-moments` Automatically identifies moments in the transcript that need visual verification (proper nouns, game names, claims, deictic references), extracts frames at those timestamps, and validates the transcript against what's actually shown on screen.
 
 ---
 
@@ -53,10 +57,11 @@ Zero config to start. `yt-dlp` and `ffmpeg` are the only runtime dependencies. C
 3. **`ffmpeg` extracts frames at the chosen detail.** `efficient` decodes keyframes only (`-skip_frame nokey`, near-instant); `balanced`/`token-burner` use scene-change detection with **adaptive thresholds** — lower for long videos (0.12 at 60+ min), higher for short clips (0.25 at ≤1 min). Large gaps between scenes are filled with uniformly-sampled frames to ensure minimum coverage. JPEGs are 512px wide by default and clamped to 1998px tall for Hermes Read compatibility.
 4. **The transcript comes from one of two places.** First try: `yt-dlp` pulls native captions (manual or auto-generated) from the source. Fallback: extract a mono 16 kHz 64 kbps mp3 audio clip and ship it to Whisper — Groq's `whisper-large-v3` (preferred) or OpenAI's `whisper-1`.
 5. **Frames + transcript are handed to Hermes.** The script builds a `WatchReport` from all pipeline data — metadata, frames with timestamps and reasons, transcript segments (with word-level timing when available from JSON3 captions).
-6. **Optional: LLM-driven moment detection.** With `--auto-moments`, the transcript is analyzed to identify moments needing visual verification — proper nouns, claims, deictic references, speaker identity clues. Frames are extracted at those exact timestamps.
-7. **Optional: Batch vision verification.** The agent analyzes key frames with specific questions (not generic "what is shown?"), corrects misspelled names, validates claims, and identifies speakers from visual cues.
-8. **Hermes answers grounded in what's actually on screen and in the audio.** Not "based on the description" or "according to the title." It saw the frames. It heard the transcript. It verified the facts.
-9. **Stats + cleanup.** Processing stats are printed if `--stats` is set. The downloaded video file is deleted automatically after frame extraction to save disk space (200MB–1GB per run). Pass `--keep-video` to retain it. Results are cached by default for instant re-runs.
+6. **Transcript-moments: Phase 1 (prompt generation).** With `--detail transcript-moments`, the transcript is analyzed to identify50+ key moments that need visual verification — proper nouns, claims, deictic references, speaker identity clues. A `moments_prompt.txt` is generated for the agent.
+7. **Transcript-moments: Phase 2 (frame extraction).** The agent writes `key_moments.json`, and watch2 re-runs to extract frames at those exact timestamps. The Rust binary links moments to frames and computes `KeyMomentStats`.
+8. **Transcript-moments: Phase 3 (vision analysis).** The agent analyzes key frames with specific questions (not generic "what is shown?"), corrects misspelled names, validates claims, and flags contradictions. Each finding is classified: confirmed, corrected, fabrication, unverified, or partial.
+9. **Transcript-moments: Phase 4 (cross-reference + summary).** The agent cross-references transcript text against visual findings, applies corrections, and produces a grounded summary with a correction table. All data flows through `report.json` — no redundant intermediate files.
+10. **Stats + cleanup.** Processing stats are printed if `--stats` is set. The downloaded video file is deleted automatically after frame extraction to save disk space (200MB–1GB per run). Pass `--keep-video` to retain it. Results are cached by default for instant re-runs.
 
 ---
 
@@ -67,6 +72,7 @@ Zero config to start. `yt-dlp` and `ffmpeg` are the only runtime dependencies. C
 /watch2 https://www.tiktok.com/@user/video/123 summarize this
 /watch2 ~/Movies/screen-recording.mp4 when does the UI break?
 /watch2 https://vimeo.com/123 what tools does she mention?
+/watch2 https://youtu.be/abc --detail transcript-moments --min-moments 50
 ```
 
 **Focused on a specific section** — denser frame budget, lower token cost:
@@ -81,7 +87,7 @@ Zero config to start. `yt-dlp` and `ffmpeg` are the only runtime dependencies. C
 | Mode | Speed | Frames | Best For |
 |------|-------|--------|----------|
 | `transcript` | Fastest | 0 | Transcript-only, no video download |
-| `transcript-moments` | ~30s | LLM-driven | Two-phase: detect key moments → extract frames for verification |
+| `transcript-moments` | ~30s phase1 | 4-phase pipeline | Phase1: prompt → Phase2: frames → Phase3: vision → Phase4: cross-ref |
 | `screenshot-first` | ~30s | LLM-driven | One frame per subtitle segment |
 | `efficient` | ~0.5s | 50 | Quick scan, keyframes only |
 | `balanced` | ~20s | 100 | General analysis (default) |
@@ -118,6 +124,8 @@ Zero config to start. `yt-dlp` and `ffmpeg` are the only runtime dependencies. C
 | `--min-moments N` | Min key moments to detect (auto-calculated if omitted) | auto |
 | `--stats` | Include analysis stats in output | false |
 | `--stats-format telegram\|compact` | Stats output format | telegram |
+| `--fuse-scenes` | Fuse scene boundaries with transcript for better moment detection | false |
+| `--no-scene-detection` | Skip av-scenechange scene detection | false |
 
 ---
 
@@ -132,6 +140,8 @@ Token cost is dominated by frames. Every frame is an image; image tokens add up 
 | 1 — 3 min | ~60 frames | Comfortable |
 | 3 — 10 min | ~80 frames | Sparse but workable |
 | 10+ min | 100 frames (capped) | Sparse — re-run with `--start`/`--end` |
+
+**transcript-moments mode** bypasses this budget entirely — it extracts frames at 50+ agent-identified timestamps (uncapped), so every frame targets a specific claim or entity that needs visual verification.
 
 When the user names a moment ("around 2:30", "the last 30 seconds"), pass `--start` / `--end`. Focused mode gets denser per-second budgets, capped at 2 fps.
 
@@ -154,7 +164,7 @@ cargo build --release
 sudo cp target/release/watch2 /usr/local/bin/
 ```
 
-**Runtime dependencies:** `yt-dlp`, `ffmpeg`, `ffprobe` (same as Python version)
+**Runtime dependencies:** `yt-dlp`, `ffmpeg`, `ffprobe`, `av-scenechange` (mandatory for all video modes)
 
 ---
 
@@ -165,7 +175,7 @@ Captions cover the majority of public videos for free. The Whisper fallback only
 | Capability | Requirement | Cost |
 |------------|-------------|------|
 | Download + native captions | `yt-dlp` + `ffmpeg` | Free |
-| Whisper fallback (preferred) | [Groq API key](https://console.groq.com/keys) | ~$0.04/hr |
+| Whisper fallback (preferred) | [Groq API key](https://console.groq.com/keys) | ~$0.004/min |
 | Whisper fallback (alt) | [OpenAI API key](https://platform.openai.com/api-keys) | Standard pricing |
 | Disable Whisper | `--no-whisper` | Free, frames-only |
 
@@ -211,8 +221,8 @@ watch2/
 │   ├── cache.rs            # Video/subtitle caching (SHA256, 10GB max)
 │   ├── download.rs         # yt-dlp wrapper + YouTube 2026 support
 │   ├── llm.rs              # LLM language detection (Groq → OpenAI)
-│   ├── pipeline.rs         # Pipeline orchestrator (9 steps)
-│   ├── frames/             # Frame extraction (module directory)
+│   ├── pipeline.rs         # Pipeline orchestrator (10 steps, 4 phases)
+│   ├── frames/             # Frame extraction (8 engines)
 │   │   ├── mod.rs          # Re-exports + auto-fps logic
 │   │   ├── keyframe.rs     # Keyframe extraction (-skip_frame nokey)
 │   │   ├── uniform.rs      # Uniform sampling
@@ -222,20 +232,22 @@ watch2/
 │   │   ├── metadata.rs     # ffprobe metadata extraction
 │   │   └── timestamp.rs    # Extract at specific timestamps
 │   ├── scene.rs            # Scene detection (adaptive threshold)
+│   ├── scene_detect.rs     # av-scenechange integration
 │   ├── dedup.rs            # Frame dedup (ffmpeg batch pipe, 16x16 thumbs)
 │   ├── transcript.rs       # JSON3/VTT subtitle parser
 │   ├── whisper.rs          # Groq/OpenAI API client (4 retries)
 │   ├── moments.rs          # LLM moment detection + prompt generation
 │   ├── moment_frames.rs    # Frame-moment matching + vision pipeline
-│   ├── vision.rs           # Vision verification + batch analysis
+│   ├── fusion.rs           # Scene + transcript fusion alignment
+│   ├── vision.rs           # Vision verification + batch analysis (1026 LOC)
 │   ├── corrections.rs      # Transcript corrections (punctuation-preserving)
 │   ├── synthesis.rs        # Grounded synthesis (transcript + visual evidence)
 │   ├── stats.rs            # Analysis stats + token estimation
-│   ├── output.rs           # Markdown/JSON report generator
+│   ├── output.rs           # Markdown/JSON report generator (WatchReport)
 │   ├── setup.rs            # Preflight checks (binaries, API keys, permissions)
 │   ├── timestamp.rs        # Timestamp parsing (SS, MM:SS, HH:MM:SS)
 │   └── error.rs            # Error types (thiserror)
-└── tests/                  # Integration tests (669 LOC)
+└── tests/                  # Integration tests (211 passing)
     ├── test_cli.rs
     ├── test_config.rs
     ├── test_download.rs
@@ -250,15 +262,48 @@ watch2/
 ## Development
 
 ```bash
-# Run tests
+# Run all tests
 cargo test
+
+# Run specific test suite
+cargo test test_frames
+cargo test test_transcript
+cargo test test_output
 
 # Build release
 cargo build --release
 
 # Install
 sudo cp target/release/watch2 /usr/local/bin/
+
+# Run with verbose output
+RUST_LOG=debug cargo run -- --help
 ```
+
+---
+
+## Transcript-Moments Pipeline
+
+The `--detail transcript-moments` mode runs a 4-phase pipeline that combines transcript intelligence with visual verification:
+
+```
+Phase 1 (Rust): transcript → moments_prompt.txt (LLM prompt for moment detection)
+    ↓ Agent reads prompt, identifies 50+ key moments
+Phase 2 (Rust): key_moments.json → frames extracted at timestamps → report.json
+    ↓ Agent reads report.json, analyzes frames via vision_analyze
+Phase 3 (Agent): vision findings → classify (confirmed/corrected/fabrication/unverified)
+    ↓ Cross-reference gate: transcript × vision × scene
+Phase 4 (Agent): corrections → grounded summary with correction table
+```
+
+**Data flow**: `report.json` is the single source of truth. The Rust binary outputs structured data; the agent reads it directly. No intermediate JSON files needed.
+
+**Cross-reference methodology**: Every vision finding is classified into 5 categories:
+- ✅ **confirmed** — vision matches transcript
+- 🔧 **corrected** — vision shows different spelling/entity
+- ❓ **fabrication** — claim has no visual evidence
+- ⚠️ **unverified** — cannot determine from visual alone
+- 🔸 **partial** — partially shown on screen
 
 ---
 
