@@ -44,7 +44,7 @@ Zero config to start. `yt-dlp`, `ffmpeg`, and `av-scenechange` are the only runt
 
 **Turn a playlist into notes.** `/watch2 https://youtu.be/ summarize this to a note` Run it across a series and file a per-video summary, so a channel or course becomes a searchable set of notes instead of hours you have to sit through.
 
-**Catch what captions get wrong.** `/watch2 https://youtu.be/abc --detail transcript-moments` Auto-captions misspell names, garble proper nouns, mishear numbers. The transcript-moments pipeline identifies50+ key moments, extracts frames at those timestamps, and cross-references the transcript against what's actually on screen. Corrections are grounded in visual evidence, not guesses.
+**Catch what captions get wrong.** `/watch2 https://youtu.be/abc --detail transcript-moments` Auto-captions misspell names, garble proper nouns, mishear numbers. The transcript-moments pipeline identifies 50+ key moments, extracts frames at those timestamps, and cross-references the transcript against what's actually on screen. Corrections are grounded in visual evidence, not guesses.
 
 **Verify transcript accuracy with visual evidence.** `/watch2 https://youtu.be/abc --auto-moments` Automatically identifies moments in the transcript that need visual verification (proper nouns, game names, claims, deictic references), extracts frames at those timestamps, and validates the transcript against what's actually shown on screen.
 
@@ -57,10 +57,10 @@ Zero config to start. `yt-dlp`, `ffmpeg`, and `av-scenechange` are the only runt
 3. **`ffmpeg` extracts frames at the chosen detail.** `efficient` decodes keyframes only (`-skip_frame nokey`, near-instant); `balanced`/`token-burner` use scene-change detection with **adaptive thresholds** — lower for long videos (0.12 at 60+ min), higher for short clips (0.25 at ≤1 min). Large gaps between scenes are filled with uniformly-sampled frames to ensure minimum coverage. JPEGs are 512px wide by default and clamped to 1998px tall for Hermes Read compatibility.
 4. **The transcript comes from one of two places.** First try: `yt-dlp` pulls native captions (manual or auto-generated) from the source. Fallback: extract a mono 16 kHz 64 kbps mp3 audio clip and ship it to Whisper — Groq's `whisper-large-v3` (preferred) or OpenAI's `whisper-1`.
 5. **Frames + transcript are handed to Hermes.** The script builds a `WatchReport` from all pipeline data — metadata, frames with timestamps and reasons, transcript segments (with word-level timing when available from JSON3 captions).
-6. **Transcript-moments: Phase 1 (prompt generation).** With `--detail transcript-moments`, the transcript is analyzed to identify50+ key moments that need visual verification — proper nouns, claims, deictic references, speaker identity clues. A `moments_prompt.txt` is generated for the agent.
+6. **Transcript-moments: Phase 1 (prompt generation).** With `--detail transcript-moments`, the transcript is analyzed to identify 50+ key moments that need visual verification — proper nouns, claims, deictic references, speaker identity clues. A `moments_prompt.txt` is generated for the agent.
 7. **Transcript-moments: Phase 2 (frame extraction).** The agent writes `key_moments.json`, and watch2 re-runs to extract frames at those exact timestamps. The Rust binary links moments to frames and computes `KeyMomentStats`.
 8. **Transcript-moments: Phase 3 (vision analysis).** The agent analyzes key frames with specific questions (not generic "what is shown?"), corrects misspelled names, validates claims, and flags contradictions. Each finding is classified: confirmed, corrected, fabrication, unverified, or partial.
-9. **Transcript-moments: Phase 4 (cross-reference + summary).** The agent cross-references transcript text against visual findings, applies corrections, and produces a grounded summary with a correction table. All data flows through `report.json` — no redundant intermediate files.
+9. **Transcript-moments: Phase 4 (cross-reference + summary).** The agent cross-references transcript text against visual findings, applies corrections, and produces a grounded summary. All data flows through `report.json` — no redundant intermediate files.
 10. **Stats + cleanup.** Processing stats are printed if `--stats` is set. The downloaded video file is deleted automatically after frame extraction to save disk space (200MB–1GB per run). Pass `--keep-video` to retain it. Results are cached by default for instant re-runs.
 
 ---
@@ -95,7 +95,7 @@ Zero config to start. `yt-dlp`, `ffmpeg`, and `av-scenechange` are the only runt
 
 ```
 /watch2 https://youtu.be/abc --detail transcript          # transcript only
-/watch2 https://youtu.be/abc --detail transcript-moments  # two-phase moment detection
+/watch2 https://youtu.be/abc --detail transcript-moments  # 4-phase moment detection
 /watch2 https://youtu.be/abc --detail efficient           # fast keyframes
 /watch2 https://youtu.be/abc --detail balanced            # scene-aware (default)
 /watch2 https://youtu.be/abc --detail token-burner        # uncapped
@@ -293,7 +293,7 @@ Phase 2 (Rust): key_moments.json → frames extracted at timestamps → report.j
     ↓ Agent reads report.json, analyzes frames via vision_analyze
 Phase 3 (Agent): vision findings → classify (confirmed/corrected/fabrication/unverified)
     ↓ Cross-reference gate: transcript × vision × scene
-Phase 4 (Agent): corrections → grounded summary with correction table
+Phase 4 (Agent): corrections → grounded summary
 ```
 
 **Data flow**: `report.json` is the single source of truth. The Rust binary outputs structured data; the agent reads it directly. No intermediate JSON files needed.
