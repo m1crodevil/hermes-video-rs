@@ -154,11 +154,10 @@ watch2 "URL" --detail transcript  # Fastest — no video download
 When captions are available, this is the **fastest and most accurate** approach:
 
 - [ ] Step 1: Run `watch2 "<source>" --detail transcript-moments --min-moments 50 --out-dir <FIXED_DIR>`
-  - Phase 1 now downloads video + runs scene detection automatically (~20-30s)
-  - Generates `moments_prompt.txt` (transcript-only) AND `fused_moments_prompt.txt` (transcript + scene boundaries, if scene detection succeeded)
+  - First run: generates `moments_prompt.txt` (~15s, no video download)
   - **CRITICAL: Use `--out-dir` to pin the working directory.**
   - **VERIFICATION REQUIRED:** After Step 1, check that `<workdir>/moments_prompt.txt` exists.
-- [ ] Step 2: Read prompts — if `fused_moments_prompt.txt` exists, USE IT (better quality with scene boundary data). Otherwise use `moments_prompt.txt`.
+- [ ] Step 2: Read `moments_prompt.txt`, analyze transcript, identify 50+ key moments
 - [ ] Step 3: Write moments as JSON to `<workdir>/key_moments.json`
 - [ ] Step 3a: **Schema** — `key_moments.json` MUST use this exact format:
   ```json

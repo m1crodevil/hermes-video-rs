@@ -57,8 +57,8 @@ Zero config to start. `yt-dlp`, `ffmpeg`, and `av-scenechange` are the only runt
 3. **`ffmpeg` extracts frames at the chosen detail.** `efficient` decodes keyframes only (`-skip_frame nokey`, near-instant); `balanced`/`token-burner` use scene-change detection with **adaptive thresholds** — lower for long videos (0.12 at 60+ min), higher for short clips (0.25 at ≤1 min). Large gaps between scenes are filled with uniformly-sampled frames to ensure minimum coverage. JPEGs are 512px wide by default and clamped to 1998px tall for Hermes Read compatibility.
 4. **The transcript comes from one of two places.** First try: `yt-dlp` pulls native captions (manual or auto-generated) from the source. Fallback: extract a mono 16 kHz 64 kbps mp3 audio clip and ship it to Whisper — Groq's `whisper-large-v3` (preferred) or OpenAI's `whisper-1`.
 5. **Frames + transcript are handed to Hermes.** The script builds a `WatchReport` from all pipeline data — metadata, frames with timestamps and reasons, transcript segments (with word-level timing when available from JSON3 captions).
-6. **Transcript-moments: Phase 1 (prompt generation + scene detection).** With `--detail transcript-moments`, the video is downloaded (720p cap), av-scenechange runs scene detection, and the transcript is fused with scene boundary data. The agent receives both a transcript-only prompt (`moments_prompt.txt`) and a fused prompt (`fused_moments_prompt.txt`) with scene context — use the fused version for better moment selection.
-7. **Transcript-moments: Phase 2 (frame extraction).** The agent writes `key_moments.json`, and watch2 re-runs to extract frames at those exact timestamps. Scene detection is skipped if already done in Phase 1 (no redundant work).
+6. **Transcript-moments: Phase 1 (prompt generation).** With `--detail transcript-moments`, the transcript is analyzed to identify 50+ key moments that need visual verification — proper nouns, claims, deictic references, speaker identity clues. A `moments_prompt.txt` is generated for the agent.
+7. **Transcript-moments: Phase 2 (frame extraction + scene detection).** The agent writes `key_moments.json`, and watch2 re-runs to download the video, run av-scenechange scene detection, and extract frames at those exact timestamps.
 8. **Transcript-moments: Phase 3 (vision analysis).** The agent analyzes key frames with specific questions (not generic "what is shown?"), corrects misspelled names, validates claims, and flags contradictions. Each finding is classified: confirmed, corrected, fabrication, unverified, or partial.
 9. **Transcript-moments: Phase 4 (cross-reference + summary).** The agent cross-references transcript text against visual findings, applies corrections, and produces a grounded summary. All data flows through `report.json` — no redundant intermediate files.
 10. **Stats + cleanup.** Processing stats are printed if `--stats` is set. The downloaded video file is deleted automatically after frame extraction to save disk space (200MB–1GB per run). Pass `--keep-video` to retain it. Results are cached by default for instant re-runs.
@@ -287,10 +287,10 @@ RUST_LOG=debug cargo run -- --help
 The `--detail transcript-moments` mode runs a 4-phase pipeline that combines transcript intelligence with visual verification:
 
 ```
-Phase 1 (Rust): transcript + video download + av-scenechange → moments_prompt.txt + fused_moments_prompt.txt
-    ↓ Agent uses fused prompt (better quality with scene boundary data)
-Phase 2 (Rust): key_moments.json → frames extracted at timestamps → report.json
-    ↓ (scene detection skipped — already done in Phase 1)
+Phase 1 (Rust): transcript → moments_prompt.txt (no video download, ~15s)
+    ↓ Agent reads prompt, identifies 50+ key moments
+Phase 2 (Rust): key_moments.json → video download + scene detection + frame extraction → report.json
+    ↓ Agent reads report.json, analyzes frames via vision_analyze
 Phase 3 (Agent): vision findings → classify (confirmed/corrected/fabrication/unverified)
     ↓ Cross-reference gate: transcript × vision × scene
 Phase 4 (Agent): corrections → grounded summary

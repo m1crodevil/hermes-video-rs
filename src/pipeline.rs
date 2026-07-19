@@ -686,34 +686,7 @@ fn run_transcript_moments_phase1(
     let transcript_text =
         crate::moments::format_transcript_for_analysis(transcript_segments);
 
-    // ── Step 1: Download video for scene detection ──────────────────────
-    let video_path = if !cli.no_scene_detection {
-        download_for_scene_detection(cli, download_dir, llm_lang)
-    } else {
-        None
-    };
-
-    // ── Step 2: Run scene detection ────────────────────────────────────
-    let (scene_text, fusion_text, _fused_moments, scene_boundaries) =
-        if let Some(ref vp) = video_path {
-            let fps = cli.fps.unwrap_or(30.0) as f64;
-            let duration = crate::frames::get_metadata(vp)
-                .map(|m| m.duration)
-                .unwrap_or(0.0);
-            run_scene_detection_for_phase1(vp, transcript_segments, duration, fps)
-        } else {
-            (String::new(), String::new(), vec![], vec![])
-        };
-
-    // ── Step 3: Save scene boundaries for Phase 2 ──────────────────────
-    if !scene_boundaries.is_empty() {
-        let fps = cli.fps.unwrap_or(30.0) as f64;
-        if let Err(e) = save_scene_boundaries(work, &scene_boundaries, fps) {
-            eprintln!("[watch2] ⚠️  Failed to save scene boundaries: {}", e);
-        }
-    }
-
-    // ── Step 4: Generate transcript-only prompt (always) ───────────────
+    // Generate transcript-only prompt
     let prompt = crate::moments::generate_prompt(
         &transcript_text,
         &dl_result.info.title,
@@ -729,31 +702,13 @@ fn run_transcript_moments_phase1(
         prompt_path.display()
     );
 
-    // ── Step 5: Generate fused prompt (if scene data available) ─────────
-    if !scene_text.is_empty() {
-        let fused_prompt = crate::moments::generate_fused_prompt(
-            &transcript_text,
-            &fusion_text,
-            &scene_text,
-            &dl_result.info.title,
-            dl_result.info.uploader.as_deref().unwrap_or("Unknown"),
-            dl_result.info.duration.unwrap_or(0.0),
-            cli.max_moments,
-            cli.min_moments,
-        );
-        let fused_prompt_path = work.join("fused_moments_prompt.txt");
-        std::fs::write(&fused_prompt_path, &fused_prompt)?;
-        eprintln!("[watch2] ✅ Fused prompt written to {} (transcript + scene boundaries)", fused_prompt_path.display());
-    }
-
     eprintln!();
     eprintln!("📋 Agent workflow:");
-    eprintln!("  1. If fused_moments_prompt.txt exists → use it (better quality)");
-    eprintln!("  2. Otherwise → use moments_prompt.txt (transcript-only)");
-    eprintln!("  3. Send the prompt to an LLM to identify key moments");
-    eprintln!("  4. Save the LLM JSON response as an array to:");
+    eprintln!("  1. Send moments_prompt.txt to an LLM to identify key moments");
+    eprintln!("  2. Save the LLM JSON response as an array to:");
     eprintln!("     {}", work.join("key_moments.json").display());
-    eprintln!("  5. Re-run this command to extract frames at those moments");
+    eprintln!("  3. Re-run this command to extract frames at those moments");
+    eprintln!("  4. Scene detection runs automatically in Phase 2 (after video download)");
     eprintln!();
 
     let title = if dl_result.title.is_empty() || dl_result.title == "Unknown" {
@@ -882,14 +837,8 @@ fn run_transcript_moments_phase2(
         }
     }
 
-    // Run scene detection — use Phase 1 results if available, otherwise detect now
-    let saved_scenes = load_scene_boundaries(work);
-    if !saved_scenes.is_empty() {
-        eprintln!(
-            "[watch2] Using {} scenes from Phase 1 (skipping redundant detection)",
-            saved_scenes.len()
-        );
-    } else if let Some(vp) = video_path.as_ref() {
+    // Run scene detection after video download
+    if let Some(vp) = video_path.as_ref() {
         let fps = cli.fps.unwrap_or(30.0) as f64;
         match crate::scene_detect::detect(vp, fps, *duration) {
             Ok(result) => {
