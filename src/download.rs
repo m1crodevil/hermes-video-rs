@@ -223,6 +223,16 @@ fn list_available_subtitles(url: &str, use_cookies: bool) -> (Vec<String>, Vec<S
     (manual, auto)
 }
 
+/// Single-pass fetch: metadata + all subtitles in one yt-dlp call.
+///
+/// This replaces the previous 3-pass approach (metadata → list-subs → fetch-subs)
+/// with a single pass that fetches everything at once. We detect the video language
+/// from `info.json` instead of a separate `--list-subs` call.
+///
+/// Fallback chain for language detection:
+///   1. LLM-detected language (passed via `llm_lang`)
+///   2. `info.language` from yt-dlp metadata
+///   3. "en" (English)
 pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Option<&str>) -> Result<DownloadResult> {
     let url = sanitize_url(url);
     std::fs::create_dir_all(out_dir)?;
@@ -230,42 +240,7 @@ pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
 
     let network_opts = ytdlp_network_opts(use_cookies);
 
-    // --- First pass: fetch metadata only (for language detection) ---
-    let mut meta_args: Vec<&str> = Vec::new();
-    for opt in &network_opts {
-        meta_args.push(opt.as_str());
-    }
-    meta_args.extend([
-        "--skip-download",
-        "--write-info-json",
-        "--no-playlist",
-        "--ignore-errors",
-        "-o", &output_template,
-        "--", &url,
-    ]);
-    let _ = Command::new("yt-dlp").args(&meta_args).status();
-
-    let info = extract_info(out_dir);
-
-    // --- Detect best subtitle language ---
-    let (manual_subs, auto_subs) = list_available_subtitles(&url, use_cookies);
-    let detected_lang = suggest_subtitle_language(
-        info.language.as_deref(),
-        &manual_subs,
-        &auto_subs,
-        llm_lang, // LLM detection passed via pipeline
-    );
-    if !is_valid_lang(&detected_lang) {
-        eprintln!("[watch2] detected lang '{}' not in whitelist, falling back to en", detected_lang);
-    }
-    let lang_pattern = subtitle_lang_pattern(&detected_lang);
-    let lang_name = get_language_name(&detected_lang);
-    eprintln!(
-        "[watch2] subtitle language: {} ({}) — pattern: {}",
-        lang_name, detected_lang, lang_pattern
-    );
-
-    // --- Second pass: fetch subtitles in detected language ---
+    // --- Single pass: metadata + all subtitles ---
     let mut args: Vec<&str> = Vec::new();
     for opt in &network_opts {
         args.push(opt.as_str());
@@ -275,7 +250,7 @@ pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
         "--write-info-json",
         "--write-subs",
         "--write-auto-subs",
-        "--sub-langs", &lang_pattern,
+        "--sub-langs", ".*",  // Fetch ALL subtitle languages
         "--sub-format", "json3/best",
         "--no-playlist",
         "--ignore-errors",
@@ -290,9 +265,43 @@ pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
 
     match status {
         Ok(s) if s.success() => {
+            let mut info = extract_info(out_dir);
+
+            // Override language from LLM if provided
+            if let Some(lang) = llm_lang {
+                if !lang.is_empty() {
+                    info.language = Some(lang.to_string());
+                }
+            }
+
+            // Fallback: if no language from metadata, default to English
+            if info.language.is_none() {
+                info.language = Some("en".to_string());
+            }
+
+            // Validate language and fix if needed
+            let detected_lang = if let Some(ref lang) = info.language {
+                if is_valid_lang(lang) {
+                    lang.clone()
+                } else {
+                    eprintln!("[watch2] detected lang '{}' not in whitelist, falling back to en", lang);
+                    info.language = Some("en".to_string());
+                    "en".to_string()
+                }
+            } else {
+                "en".to_string()
+            };
+
+            let lang_pattern = subtitle_lang_pattern(&detected_lang);
+            let lang_name = get_language_name(&detected_lang);
+            eprintln!(
+                "[watch2] subtitle language: {} ({}) — pattern: {}",
+                lang_name, detected_lang, lang_pattern
+            );
+
             let subtitle_path = find_subtitle(out_dir, &detected_lang);
-            let info = extract_info(out_dir);
             let title = info.title.clone();
+
             Ok(DownloadResult {
                 video_path: None,
                 subtitle_path,
@@ -317,36 +326,21 @@ pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
 
     let network_opts = ytdlp_network_opts(use_cookies);
 
-    // --- First pass: fetch metadata only (for language detection) ---
-    // NOTE: Do NOT download subtitles here — pass 1 previously hardcoded "en.*"
-    // which caused cross-language subtitle conflicts when the detected language
-    // was different (e.g. Indonesian video with leftover English .json3 files).
-    let mut meta_args: Vec<&str> = Vec::new();
-    for opt in &network_opts {
-        meta_args.push(opt.as_str());
-    }
-    meta_args.extend([
-        "--skip-download",
-        "--write-info-json",
-        "--no-playlist",
-        "--ignore-errors",
-        "-o",
-        &output_template,
-        "--",
-        &url,
-    ]);
-    let _ = Command::new("yt-dlp").args(&meta_args).status();
+    // --- Reuse existing metadata from fetch_captions() if available ---
+    let existing_info = extract_info(out_dir);
+    let detected_lang = if let Some(ref lang) = existing_info.language {
+        lang.clone()
+    } else {
+        // Fallback: detect from available subs (only if no info.json exists)
+        let (manual_subs, auto_subs) = list_available_subtitles(&url, use_cookies);
+        suggest_subtitle_language(
+            existing_info.language.as_deref(),
+            &manual_subs,
+            &auto_subs,
+            llm_lang,
+        )
+    };
 
-    let info = extract_info(out_dir);
-
-    // --- Detect best subtitle language ---
-    let (manual_subs, auto_subs) = list_available_subtitles(&url, use_cookies);
-    let detected_lang = suggest_subtitle_language(
-        info.language.as_deref(),
-        &manual_subs,
-        &auto_subs,
-        llm_lang, // LLM detection passed via pipeline
-    );
     if !is_valid_lang(&detected_lang) {
         eprintln!("[watch2] detected lang '{}' not in whitelist, falling back to en", detected_lang);
     }
@@ -357,7 +351,7 @@ pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
         lang_name, detected_lang, lang_pattern
     );
 
-    // --- Second pass: full download with detected subtitle language ---
+    // --- Single pass: full download with subtitles (NO separate metadata fetch) ---
     // Clean stale subtitles from any prior runs to avoid cross-language conflicts
     clean_stale_subtitles(out_dir);
     let mut args: Vec<&str> = Vec::new();
@@ -369,6 +363,7 @@ pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
     args.extend([
         "-f", format_str,
         "--merge-output-format", "mp4",
+        "--write-info-json",  // Re-generate info.json with full download
         "--write-subs",
         "--write-auto-subs",
         "--sub-langs", &lang_pattern,

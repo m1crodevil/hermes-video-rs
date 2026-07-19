@@ -56,16 +56,24 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
     }
 
     // ── Step 1b: LLM language detection ────────────────────────────────
+    // Skip LLM when metadata already has language (saves ~1-2s + API cost)
     let mut llm_lang: Option<String> = None;
     if is_url {
-        llm_lang = crate::llm::detect_language_llm(
-            &dl_result.info.title,
-            dl_result.info.description.as_deref(),
-            &config,
-        )
-        .await;
-        if let Some(ref lang) = llm_lang {
-            eprintln!("[watch2] LLM detected language: {}", lang);
+        if let Some(ref lang) = dl_result.info.language {
+            // Metadata already has language — skip LLM
+            eprintln!("[watch2] language from metadata: {}", lang);
+            llm_lang = Some(lang.clone());
+        } else {
+            // No language in metadata — try LLM detection
+            llm_lang = crate::llm::detect_language_llm(
+                &dl_result.info.title,
+                dl_result.info.description.as_deref(),
+                &config,
+            )
+            .await;
+            if let Some(ref lang) = llm_lang {
+                eprintln!("[watch2] LLM detected language: {}", lang);
+            }
         }
     }
 
@@ -92,38 +100,18 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
             transcript::filter_by_range(&transcript_segments, focus_start, focus_end);
     }
 
-    // ── Step 2b: Scene detection (fused mode) ──────────────────────────────
+    // ── Step 2b: Scene detection (early — only if video already available) ──
     let mut fused_moments: Vec<crate::fusion::FusedMoment> = Vec::new();
     let mut scene_text = String::new();
     let mut fusion_text = String::new();
     let mut scene_count: Option<usize> = None;
+    let mut scene_boundaries: Vec<crate::scene_detect::SceneBoundary> = Vec::new();
 
-    if cli.fuse_scenes && !transcript_segments.is_empty() {
-        if let Some(ref vp) = dl_result.video_path {
-            eprintln!("[watch2] Running fused scene+transcript analysis...");
-            let meta = frames::get_metadata(vp);
-            let dur = meta.as_ref().map(|m| m.duration).unwrap_or(0.0);
-            // Use cli.fps if set, otherwise default to 30.0 for scene detection
-            let fps = cli.fps.unwrap_or(30.0) as f64;
-
-            match crate::scene_detect::detect(vp, fps, dur) {
-                Ok(result) => {
-                    eprintln!("[watch2] Detected {} scenes ({}ms)", result.total_scenes(), result.detection_time_ms);
-                    scene_text = crate::fusion::format_scene_changes_for_prompt(&result.boundaries);
-                    fused_moments = crate::fusion::fuse_scenes_and_transcript(
-                        &result.boundaries,
-                        &transcript_segments,
-                        dur,
-                    );
-                    fusion_text = crate::fusion::format_fusion_data_for_prompt(&fused_moments);
-                    scene_count = Some(result.total_scenes());
-                    eprintln!("[watch2] {} fused moments generated", fused_moments.len());
-                }
-                Err(e) => {
-                    eprintln!("[watch2] Scene detection failed: {}", e);
-                }
-            }
-        }
+    // Scene detection runs later (after video download) for most modes.
+    // Early detection only works for local files or cached videos.
+    if let Some(ref vp) = dl_result.video_path {
+        run_scene_detection(vp, &transcript_segments, cli.fuse_scenes, cli.fps,
+            &mut scene_text, &mut fusion_text, &mut fused_moments, &mut scene_count, &mut scene_boundaries);
     }
 
     // ── Phase 1: TranscriptMoments — first run (generate prompt & exit) ─
@@ -220,6 +208,17 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
                 }
                 Err(e) => eprintln!("[watch2] frame extraction error: {}", e),
             }
+        }
+    }
+
+    // ── Step 4b: Scene detection (mandatory for all modes with video) ───
+    // Runs after frame extraction. For transcript-moments, also runs in Phase 2.
+    // Skip if Phase 2 already ran scene detection (transcript-moments mode).
+    let has_key_moments = detail == DetailMode::TranscriptMoments && work.join("key_moments.json").exists();
+    if detail != DetailMode::Transcript && !has_key_moments {
+        if let Some(ref vp) = video_path {
+            run_scene_detection(vp, &transcript_segments, cli.fuse_scenes, cli.fps,
+                &mut scene_text, &mut fusion_text, &mut fused_moments, &mut scene_count, &mut scene_boundaries);
         }
     }
 
@@ -719,6 +718,23 @@ fn run_transcript_moments_phase2(
         }
     }
 
+    // Run scene detection after video download in transcript-moments mode
+    if let Some(vp) = video_path.as_ref() {
+        let fps = cli.fps.unwrap_or(30.0) as f64;
+        match crate::scene_detect::detect(vp, fps, *duration) {
+            Ok(result) => {
+                eprintln!(
+                    "[watch2] av-scenechange: {} scenes detected ({}ms)",
+                    result.total_scenes(),
+                    result.detection_time_ms
+                );
+            }
+            Err(e) => {
+                eprintln!("[watch2] av-scenechange: {}", e);
+            }
+        }
+    }
+
     // Extract frames at moment timestamps (uncapped)
     if let Some(vp) = video_path.as_ref() {
         eprintln!(
@@ -775,6 +791,52 @@ fn run_transcript_moments_phase2(
     }
 
     Ok(())
+}
+
+/// Run av-scenechange scene detection and populate output variables.
+/// Always runs when video is available (mandatory). Fusion-specific outputs
+/// (fused_moments, scene_text, fusion_text) are only populated when fuse_scenes is true.
+fn run_scene_detection(
+    video_path: &std::path::Path,
+    transcript_segments: &[crate::output::TranscriptSegment],
+    fuse_scenes: bool,
+    fps_override: Option<f32>,
+    scene_text: &mut String,
+    fusion_text: &mut String,
+    fused_moments: &mut Vec<crate::fusion::FusedMoment>,
+    scene_count: &mut Option<usize>,
+    scene_boundaries: &mut Vec<crate::scene_detect::SceneBoundary>,
+) {
+    let meta = frames::get_metadata(video_path);
+    let dur = meta.as_ref().map(|m| m.duration).unwrap_or(0.0);
+    let fps = fps_override.unwrap_or(30.0) as f64;
+
+    match crate::scene_detect::detect(video_path, fps, dur) {
+        Ok(result) => {
+            eprintln!(
+                "[watch2] av-scenechange: {} scenes detected ({}ms)",
+                result.total_scenes(),
+                result.detection_time_ms
+            );
+            *scene_count = Some(result.total_scenes());
+            *scene_boundaries = result.boundaries.clone();
+
+            // Fusion-specific outputs (only when --fuse-scenes is set)
+            if fuse_scenes && !transcript_segments.is_empty() {
+                *scene_text = crate::fusion::format_scene_changes_for_prompt(&result.boundaries);
+                *fused_moments = crate::fusion::fuse_scenes_and_transcript(
+                    &result.boundaries,
+                    transcript_segments,
+                    dur,
+                );
+                *fusion_text = crate::fusion::format_fusion_data_for_prompt(fused_moments);
+                eprintln!("[watch2] {} fused moments generated", fused_moments.len());
+            }
+        }
+        Err(e) => {
+            eprintln!("[watch2] av-scenechange: {}", e);
+        }
+    }
 }
 
 fn cleanup(
