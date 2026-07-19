@@ -3,6 +3,14 @@ use std::process::Command;
 use crate::error::{WatchError, Result};
 use crate::config::{suggest_subtitle_language, get_language_name, is_valid_lang};
 
+/// Common yt-dlp arguments used across all download functions.
+/// Ensures consistent behavior and prevents playlist processing.
+const COMMON_ARGS: &[&str] = &[
+    "--no-playlist",
+    "--ignore-errors",
+    "--sleep-subtitles", "3",
+];
+
 /// Rich metadata extracted from a video's info.json sidecar file.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VideoInfo {
@@ -170,7 +178,7 @@ fn subtitle_lang_pattern(lang: &str) -> String {
 /// Returns `(manual: Vec<String>, auto: Vec<String>)` of language codes.
 fn list_available_subtitles(url: &str, use_cookies: bool) -> (Vec<String>, Vec<String>) {
     let mut cmd = Command::new("yt-dlp");
-    let mut args: Vec<&str> = vec!["--skip-download", "--list-subs", "--no-playlist"];
+    let mut args: Vec<&str> = vec!["--skip-download", "--list-subs", "--no-playlist", "--flat-playlist"];
 
     // Apply network opts for YouTube reliability
     let network_opts = ytdlp_network_opts(use_cookies);
@@ -245,6 +253,7 @@ pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
     for opt in &network_opts {
         args.push(opt.as_str());
     }
+    args.extend(COMMON_ARGS);
     args.extend([
         "--skip-download",
         "--write-info-json",
@@ -252,9 +261,6 @@ pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
         "--write-auto-subs",
         "--sub-langs", ".*",  // Fetch ALL subtitle languages
         "--sub-format", "json3/best",
-        "--no-playlist",
-        "--ignore-errors",
-        "--sleep-subtitles", "3",
         "-o", &output_template,
         "--", &url,
     ]);
@@ -358,6 +364,7 @@ pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
     for opt in &network_opts {
         args.push(opt.as_str());
     }
+    args.extend(COMMON_ARGS);
     // Cap video quality at 720p to avoid huge downloads (matches Python hermes-video)
     let format_str = "bv*[height<=720]+ba/b[height<=720]/bv+ba/b";
     args.extend([
@@ -368,9 +375,6 @@ pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
         "--write-auto-subs",
         "--sub-langs", &lang_pattern,
         "--sub-format", "json3/best",
-        "--no-playlist",
-        "--ignore-errors",
-        "--sleep-subtitles", "3",
         "-o", &output_template,
         "--", &url,
     ]);
