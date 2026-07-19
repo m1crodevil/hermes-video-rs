@@ -132,6 +132,116 @@ pub fn generate_prompt(
         .replace("{interval}", &format!("{:.0}", interval))
 }
 
+/// Prompt template for fused moment detection (scene changes + ASR confidence).
+const FUSED_MOMENT_DETECTION_PROMPT: &str = r#"You are analyzing a video transcript fused with scene change detection and ASR confidence data to identify moments that need visual verification.
+
+Video Title: {title}
+Uploader: {uploader}
+Duration: {duration}s ({duration_fmt})
+
+Scene Changes Detected:
+{scene_text}
+
+Transcript (timestamped):
+{transcript}
+
+Scene-Transcript Fusion (words near scene boundaries or with low ASR confidence):
+{fusion_text}
+
+Your task: Identify AT LEAST {min_moments} key moments where visual verification would improve accuracy.
+
+Priority scoring:
+- **P1 (critical)**: Scene cut/transition AND low ASR confidence — most likely to have transcription errors or visual context shifts
+- **P2**: Low ASR confidence anywhere — uncertain transcription regardless of scene context
+- **P3**: Scene cut/transition with normal confidence — visual context may clarify or contradict transcript
+- **P4+ (nice-to-have)**: Normal confidence, no scene boundary — standard moment detection
+
+Coverage guidance:
+- For a {duration}s video, aim for approximately one moment every {interval}s
+- Spread moments evenly across the FULL duration — do not cluster in the first half
+- Include moments from the beginning, middle, AND end of the video
+- Lower-priority moments (4-5) are encouraged to ensure coverage
+- It is BETTER to include too many moments than too few
+
+Focus on moments where:
+1. **Proper nouns** — names, brands, game titles, tool names that might be misspelled in auto-captions
+2. **Claims/statistics** — numbers, prices, dates that need fact-checking
+3. **Deictic references** — "this", "that", "here", "look at this" where speaker points at something
+4. **Speaker identity** — moments where it's unclear who is speaking
+5. **Visual context** — moments where understanding the visual context changes interpretation
+6. **Entity validation** — game names, software names, product names that could be transcribed incorrectly
+7. **Topic transitions** — moments where the conversation shifts to a new subject
+8. **Key arguments** — important points, conclusions, or controversial statements
+9. **Scene boundaries** — moments at or near scene changes where context shifts
+10. **Low confidence words** — words flagged as uncertain in ASR fusion data
+
+For EACH moment, provide:
+- timestamp: MM:SS format (from the transcript timestamps)
+- word: the specific word/phrase that triggered this
+- context: 1-2 sentences around this moment
+- scene_info: scene boundary info if applicable (e.g., "Scene 1 → Scene 2 at 1:30" or "none")
+- reason: one of [proper_noun, claim, deictic, speaker_id, visual_context, entity, topic_transition, key_argument, scene_boundary, low_confidence]
+- question: specific question to ask a vision model about this frame
+- priority: 1 (critical) to 5 (nice-to-have) — use the P1-P4+ scoring above
+
+Return ONLY a valid JSON array. No markdown, no explanation.
+
+Example:
+[
+  {{
+    "timestamp": "0:54",
+    "word": "Raknarok",
+    "context": "Ya kan Ragnarok. Tahu Raknarok? Raknarok tahu tahu.",
+    "scene_info": "Scene 1 → Scene 2 at 0:52",
+    "reason": "scene_boundary",
+    "question": "What game name is displayed on screen? Correct any misspellings.",
+    "priority": 1
+  }},
+  {{
+    "timestamp": "3:12",
+    "word": "1 juta dolar",
+    "context": "1 juta dolar berarti kalau rupiah sekarang 18 M",
+    "scene_info": "none",
+    "reason": "low_confidence",
+    "question": "What prize amount or monetary figure is mentioned or shown?",
+    "priority": 2
+  }}
+]"""#;
+
+/// Generate a fused moment detection prompt that includes scene change context and ASR confidence data.
+pub fn generate_fused_prompt(
+    transcript_text: &str,
+    fusion_text: &str,
+    scene_text: &str,
+    title: &str,
+    uploader: &str,
+    duration: f64,
+    max_moments: u32,
+    min_moments: Option<u32>,
+) -> String {
+    let effective_min = min_moments.unwrap_or_else(|| {
+        let suggested = ((duration / 30.0).ceil() as u32).max(5);
+        suggested.min(max_moments)
+    });
+    let interval = if effective_min > 0 {
+        duration / effective_min as f64
+    } else {
+        duration
+    };
+    let duration_fmt = format_duration(duration);
+
+    FUSED_MOMENT_DETECTION_PROMPT
+        .replace("{title}", title)
+        .replace("{uploader}", uploader)
+        .replace("{duration}", &format!("{:.0}", duration))
+        .replace("{duration_fmt}", &duration_fmt)
+        .replace("{transcript}", transcript_text)
+        .replace("{fusion_text}", fusion_text)
+        .replace("{scene_text}", scene_text)
+        .replace("{min_moments}", &effective_min.to_string())
+        .replace("{interval}", &format!("{:.0}", interval))
+}
+
 /// Build a timestamp → text map from transcript segments.
 pub fn build_timestamp_map(segments: &[TranscriptSegment]) -> HashMap<String, String> {
     segments
@@ -470,5 +580,26 @@ mod tests {
         assert!(prompt.contains("Uploader"));
         assert!(prompt.contains("120s"));
         assert!(prompt.contains("[0:00] Hello"));
+    }
+
+    #[test]
+    fn test_generate_fused_prompt_contains_scene_data() {
+        let segments = vec![make_segment(0.0, "Hello")];
+        let transcript = format_transcript_for_analysis(&segments);
+        let fused_text =
+            "[0:10] \"test\" — confidence: 65%, scene: scene 1 (10s), position: AtCut";
+        let scene_text = "Scene 1: 0:00 - 0:10 (10.0s)";
+        let prompt = generate_fused_prompt(
+            &transcript,
+            fused_text,
+            scene_text,
+            "Test Video",
+            "Uploader",
+            120.0,
+            10,
+            None,
+        );
+        assert!(prompt.contains("Scene Changes Detected"));
+        assert!(prompt.contains("Scene 1: 0:00 - 0:10"));
     }
 }
