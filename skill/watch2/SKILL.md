@@ -154,15 +154,11 @@ watch2 "URL" --detail transcript  # Fastest — no video download
 When captions are available, this is the **fastest and most accurate** approach:
 
 - [ ] Step 1: Run `watch2 "<source>" --detail transcript-moments --min-moments 50 --out-dir <FIXED_DIR>`
-  - First run: generates `moments_prompt.txt` (no video download, ~15s)
-  - **CRITICAL: Use `--out-dir` to pin the working directory.** Without it, each run creates a new `/tmp/watch-XXXX` and `key_moments.json` from run 1 is lost on run 2.
-  - **VERIFICATION REQUIRED:** After Step 1, check that `<workdir>/moments_prompt.txt` exists. If it does NOT exist:
-    1. Check output for "No subtitles found — falling through"
-    2. Check if `.json3` files exist in `<workdir>/download/`
-    3. If `.json3` files exist → follow Manual Fallback Pipeline (parse transcript → identify moments → extract at timestamps)
-    4. If no `.json3` files → video has no captions, use `--detail balanced` instead
-    5. **NEVER shortcut to "scene detection → sample 21 evenly" when captions exist**
-- [ ] Step 2: Read `<workdir>/moments_prompt.txt`, analyze transcript, identify 50+ key moments
+  - Phase 1 now downloads video + runs scene detection automatically (~20-30s)
+  - Generates `moments_prompt.txt` (transcript-only) AND `fused_moments_prompt.txt` (transcript + scene boundaries, if scene detection succeeded)
+  - **CRITICAL: Use `--out-dir` to pin the working directory.**
+  - **VERIFICATION REQUIRED:** After Step 1, check that `<workdir>/moments_prompt.txt` exists.
+- [ ] Step 2: Read prompts — if `fused_moments_prompt.txt` exists, USE IT (better quality with scene boundary data). Otherwise use `moments_prompt.txt`.
 - [ ] Step 3: Write moments as JSON to `<workdir>/key_moments.json`
 - [ ] Step 3a: **Schema** — `key_moments.json` MUST use this exact format:
   ```json
