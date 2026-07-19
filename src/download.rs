@@ -76,12 +76,16 @@ pub fn ytdlp_network_opts(use_cookies: bool) -> Vec<String> {
     }
 
     // Browser impersonation via curl_cffi (bypasses bot detection)
-    let has_curl_cffi = std::process::Command::new("python3")
-        .args(["-c", "import curl_cffi"])
-        .stdout(std::process::Stdio::null())
+    // Check via yt-dlp itself — zero Python dependency
+    let has_curl_cffi = std::process::Command::new("yt-dlp")
+        .args(["--list-impersonate-targets"])
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
+        .output()
+        .map(|o| {
+            let out = String::from_utf8_lossy(&o.stdout);
+            out.contains("Chrome") && !out.contains("unavailable")
+        })
         .unwrap_or(false);
 
     if has_curl_cffi {
