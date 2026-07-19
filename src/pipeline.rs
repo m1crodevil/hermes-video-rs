@@ -156,11 +156,11 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
                     &cli,
                     &detail,
                     &work,
+                    &download_dir,
                     &transcript_segments,
                     &transcript_source,
                     &dl_result,
-                    &scene_text,
-                    &fusion_text,
+                    llm_lang.as_deref(),
                 );
             }
         }
@@ -576,19 +576,144 @@ fn extract_frames_inner(
     })
 }
 
+/// Download video for scene detection in Phase 1.
+/// Uses same 720p cap format as Phase 2 download.
+/// Returns None if download fails (Phase 1 continues with transcript-only).
+fn download_for_scene_detection(
+    cli: &cli::Cli,
+    download_dir: &std::path::Path,
+    llm_lang: Option<&str>,
+) -> Option<std::path::PathBuf> {
+    eprintln!("[watch2] Phase 1: Downloading video for scene detection...");
+    match crate::download::download_video(&cli.source, download_dir, cli.cookies, llm_lang) {
+        Ok(result) => {
+            if let Some(ref vp) = result.video_path {
+                eprintln!("[watch2] ✅ Video downloaded for scene detection ({} MB)",
+                    std::fs::metadata(vp).map(|m| m.len() / (1024 * 1024)).unwrap_or(0));
+            }
+            result.video_path
+        }
+        Err(e) => {
+            eprintln!("[watch2] ⚠️  Video download failed: {}. Proceeding with transcript-only.", e);
+            None
+        }
+    }
+}
+
+/// Run scene detection for Phase 1 moment detection.
+/// Returns (scene_text, fusion_text, fused_moments, scene_boundaries).
+fn run_scene_detection_for_phase1(
+    video_path: &std::path::Path,
+    transcript_segments: &[crate::output::TranscriptSegment],
+    duration: f64,
+    fps: f64,
+) -> (String, String, Vec<crate::fusion::FusedMoment>, Vec<crate::scene_detect::SceneBoundary>) {
+    eprintln!("[watch2] Phase 1: Running av-scenechange...");
+    match crate::scene_detect::detect(video_path, fps, duration) {
+        Ok(result) => {
+            eprintln!(
+                "[watch2] ✅ {} scenes detected ({}ms)",
+                result.total_scenes(),
+                result.detection_time_ms
+            );
+            let fused = crate::fusion::fuse_scenes_and_transcript(
+                &result.boundaries, transcript_segments, duration
+            );
+            let scene_text = crate::fusion::format_scene_changes_for_prompt(&result.boundaries);
+            let fusion_text = crate::fusion::format_fusion_data_for_prompt(&fused);
+            eprintln!("[watch2] ✅ {} fused moments generated", fused.len());
+            (scene_text, fusion_text, fused, result.boundaries)
+        }
+        Err(e) => {
+            eprintln!("[watch2] ⚠️  Scene detection failed: {}. Using transcript-only.", e);
+            (String::new(), String::new(), vec![], vec![])
+        }
+    }
+}
+
+/// Save scene boundaries to disk for Phase 2 to read.
+fn save_scene_boundaries(work: &std::path::Path, scenes: &[crate::scene_detect::SceneBoundary], fps: f64) -> anyhow::Result<()> {
+    let data = serde_json::json!({
+        "scenes": scenes,
+        "fps": fps,
+    });
+    let path = work.join("scene_boundaries.json");
+    std::fs::write(&path, serde_json::to_string_pretty(&data)?)?;
+    eprintln!("[watch2] ✅ Scene boundaries saved to {}", path.display());
+    Ok(())
+}
+
+/// Load scene boundaries from disk (written by Phase 1).
+fn load_scene_boundaries(work: &std::path::Path) -> Vec<crate::scene_detect::SceneBoundary> {
+    let path = work.join("scene_boundaries.json");
+    if !path.exists() {
+        return vec![];
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(data) => {
+                    if let Some(scenes) = data["scenes"].as_array() {
+                        scenes.iter().filter_map(|s| {
+                            Some(crate::scene_detect::SceneBoundary::new(
+                                s["start_sec"].as_f64()?,
+                                s["end_sec"].as_f64()?,
+                                s.get("fps").and_then(|f| f.as_f64()).unwrap_or(30.0),
+                                s["frame_start"].as_u64()?,
+                                s["frame_end"].as_u64()?,
+                            ))
+                        }).collect()
+                    } else { vec![] }
+                }
+                Err(_) => vec![]
+            }
+        }
+        Err(_) => vec![]
+    }
+}
+
 fn run_transcript_moments_phase1(
     cli: &cli::Cli,
     detail: &DetailMode,
     work: &PathBuf,
+    download_dir: &std::path::Path,
     transcript_segments: &[crate::output::TranscriptSegment],
     transcript_source: &str,
     dl_result: &download::DownloadResult,
-    scene_text: &str,
-    fusion_text: &str,
+    llm_lang: Option<&str>,
 ) -> anyhow::Result<WatchReport> {
     eprintln!("[watch2] Phase 1: Generating moment detection prompt...");
     let transcript_text =
         crate::moments::format_transcript_for_analysis(transcript_segments);
+
+    // ── Step 1: Download video for scene detection ──────────────────────
+    let video_path = if !cli.no_scene_detection {
+        download_for_scene_detection(cli, download_dir, llm_lang)
+    } else {
+        None
+    };
+
+    // ── Step 2: Run scene detection ────────────────────────────────────
+    let (scene_text, fusion_text, _fused_moments, scene_boundaries) =
+        if let Some(ref vp) = video_path {
+            let fps = cli.fps.unwrap_or(30.0) as f64;
+            let duration = crate::frames::get_metadata(vp)
+                .map(|m| m.duration)
+                .unwrap_or(0.0);
+            run_scene_detection_for_phase1(vp, transcript_segments, duration, fps)
+        } else {
+            (String::new(), String::new(), vec![], vec![])
+        };
+
+    // ── Step 3: Save scene boundaries for Phase 2 ──────────────────────
+    if !scene_boundaries.is_empty() {
+        let fps = cli.fps.unwrap_or(30.0) as f64;
+        if let Err(e) = save_scene_boundaries(work, &scene_boundaries, fps) {
+            eprintln!("[watch2] ⚠️  Failed to save scene boundaries: {}", e);
+        }
+    }
+
+    // ── Step 4: Generate transcript-only prompt (always) ───────────────
     let prompt = crate::moments::generate_prompt(
         &transcript_text,
         &dl_result.info.title,
@@ -603,20 +728,13 @@ fn run_transcript_moments_phase1(
         "[watch2] ✅ Moment prompt written to {}",
         prompt_path.display()
     );
-    eprintln!();
-    eprintln!("📋 Agent workflow:");
-    eprintln!("  1. Send the prompt to an LLM to identify key moments");
-    eprintln!("  2. Save the LLM JSON response as an array to:");
-    eprintln!("     {}", work.join("key_moments.json").display());
-    eprintln!("  3. Re-run this command to extract frames at those moments");
-    eprintln!();
 
-    // Generate fused prompt if scene data is available
+    // ── Step 5: Generate fused prompt (if scene data available) ─────────
     if !scene_text.is_empty() {
         let fused_prompt = crate::moments::generate_fused_prompt(
             &transcript_text,
-            fusion_text,
-            scene_text,
+            &fusion_text,
+            &scene_text,
             &dl_result.info.title,
             dl_result.info.uploader.as_deref().unwrap_or("Unknown"),
             dl_result.info.duration.unwrap_or(0.0),
@@ -625,8 +743,18 @@ fn run_transcript_moments_phase1(
         );
         let fused_prompt_path = work.join("fused_moments_prompt.txt");
         std::fs::write(&fused_prompt_path, &fused_prompt)?;
-        eprintln!("[watch2] ✅ Fused prompt written to {}", fused_prompt_path.display());
+        eprintln!("[watch2] ✅ Fused prompt written to {} (transcript + scene boundaries)", fused_prompt_path.display());
     }
+
+    eprintln!();
+    eprintln!("📋 Agent workflow:");
+    eprintln!("  1. If fused_moments_prompt.txt exists → use it (better quality)");
+    eprintln!("  2. Otherwise → use moments_prompt.txt (transcript-only)");
+    eprintln!("  3. Send the prompt to an LLM to identify key moments");
+    eprintln!("  4. Save the LLM JSON response as an array to:");
+    eprintln!("     {}", work.join("key_moments.json").display());
+    eprintln!("  5. Re-run this command to extract frames at those moments");
+    eprintln!();
 
     let title = if dl_result.title.is_empty() || dl_result.title == "Unknown" {
         cli.source.clone()
@@ -754,8 +882,14 @@ fn run_transcript_moments_phase2(
         }
     }
 
-    // Run scene detection after video download in transcript-moments mode
-    if let Some(vp) = video_path.as_ref() {
+    // Run scene detection — use Phase 1 results if available, otherwise detect now
+    let saved_scenes = load_scene_boundaries(work);
+    if !saved_scenes.is_empty() {
+        eprintln!(
+            "[watch2] Using {} scenes from Phase 1 (skipping redundant detection)",
+            saved_scenes.len()
+        );
+    } else if let Some(vp) = video_path.as_ref() {
         let fps = cli.fps.unwrap_or(30.0) as f64;
         match crate::scene_detect::detect(vp, fps, *duration) {
             Ok(result) => {
