@@ -44,9 +44,9 @@ The user wants to understand what the video is about. Your job is to deliver a c
 
 **DON'T**: Show your work process. No cross-reference tables, no correction sections, no frame-by-frame notes, no verification trails. The analytical rigor happens internally; the output is the result.
 
-**What the output IS**: A comprehensive understanding of the video's content — what it's about, key arguments, main findings, conclusions. Like a well-written article review.
+**Data flow**: `report.json` → agent reads → `vision_analyze` → cross-reference in memory → summary in response. All analysis flows through your response text, never through intermediate files.
 
-**What the output is NOT**: A process report showing how the agent verified each claim, which frames were analyzed, or what corrections were applied.
+**NEVER use `execute_code` or Python scripts** during watch2 analysis. The Rust binary is pure Python-free. Write findings in your response, not to JSON files.
 
 ## Output Format (Telegram)
 
