@@ -248,8 +248,8 @@ pub fn build_timestamp_map(segments: &[TranscriptSegment]) -> HashMap<String, St
         .iter()
         .map(|seg| {
             let ts = format_timestamp(seg.start);
-            let text = if seg.text.len() > 100 {
-                seg.text[..100].to_string()
+            let text = if seg.text.chars().count() > 100 {
+                seg.text.chars().take(100).collect::<String>()
             } else {
                 seg.text.clone()
             };

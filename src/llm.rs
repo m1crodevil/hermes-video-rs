@@ -26,8 +26,8 @@ pub async fn detect_language_llm(
          Title: {}\n\
          Description: {}",
         title,
-        // Truncate long descriptions to save tokens
-        if desc.len() > 500 { &desc[..500] } else { desc }
+        // Truncate long descriptions to save tokens (char-safe for CJK)
+        if desc.chars().count() > 500 { desc.chars().take(500).collect::<String>() } else { desc.to_string() }
     );
 
     // Try Groq first (fast, free tier)
