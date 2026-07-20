@@ -1,6 +1,6 @@
 ---
 name: watch2
-version: "4.5.0"
+version: "4.8.0"
 description: "Watch a video (URL or local path). Rust-powered analysis with frame extraction and transcript generation."
 argument-hint: " <url-or-path> [question]"
 allowed-tools: Bash, Read, AskUserQuestion
@@ -280,7 +280,9 @@ Then sample ~21 frames evenly and `vision_analyze` strategically.
 
 | Engine | When Used | How It Works |
 |--------|-----------|--------------|
-| **av-scenechange** | All modes with video (mandatory) | `av-scenechange --min-scenecut 24` → JSON scene boundary list. Runs on balanced, efficient, token-burner, transcript-moments Phase 2 |
+| **av-scenechange** | All modes with video (mandatory) | Rust library API (`Decoder::from_file` + `detect_scene_changes`). Provides scene boundaries WITH scoring data (inter_cost, imp_block_cost, etc.) for significance-based frame selection. Runs on balanced, efficient, token-burner, transcript-moments Phase 2 |
+
+**av-scenechange** provides scoring data via `ScenecutResult`: `inter_cost`, `imp_block_cost`, `backward_adjusted_cost`, `forward_adjusted_cost`, `threshold`. Higher scores = more significant scene changes. Used for `score_based_select()` and significance filtering.
 | **scene** | balanced fallback | ffmpeg `select='gt(scene,T)'` → extract at cuts. T is adaptive (0.12-0.25 based on duration) |
 | **two-pass** | token-burner | Pass 1: av-scenechange (uncapped). Pass 2: uniform at 50% density. Merge + dedup |
 | **keyframe** | efficient, ≥4 I-frames | ffmpeg `-skip_frame nokey` → I-frames only |
@@ -288,7 +290,7 @@ Then sample ~21 frames evenly and `vision_analyze` strategically.
 | **gap-fill** | balanced, large gaps between scenes | Uniform frames inserted in gaps >2× expected interval |
 | **transcript-cue** | `--timestamps` flag | One frame per timestamp (pinned) |
 
-**av-scenechange** output format: `{"scene_changes":[0,24,50,...]}` (frame numbers). Parsed into `SceneBoundary` structs with start/end timestamps, frame ranges, and durations.
+**av-scenechange** is now used as a Rust library (not CLI subprocess). The library API returns `DetectionResults` with `scene_changes: Vec<usize>` AND `scores: BTreeMap<usize, ScenecutResult>` containing per-frame scoring data.
 
 ## Transcript Features
 
