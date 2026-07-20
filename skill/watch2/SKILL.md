@@ -290,7 +290,7 @@ Then sample ~21 frames evenly and `vision_analyze` strategically.
 | **gap-fill** | balanced, large gaps between scenes | Uniform frames inserted in gaps >2× expected interval |
 | **transcript-cue** | `--timestamps` flag | One frame per timestamp (pinned) |
 
-**av-scenechange** is now used as a Rust library (not CLI subprocess). The library API returns `DetectionResults` with `scene_changes: Vec<usize>` AND `scores: BTreeMap<usize, ScenecutResult>` containing per-frame scoring data.
+**av-scenechange** is now used as a Rust library (not CLI subprocess). The library API returns `DetectionResults` with `scene_changes: Vec<usize>` AND `scores: BTreeMap<usize, ScenecutResult>` containing per-frame scoring data. Uses `SceneDetectionSpeed::Fast` (pixel-wise comparison, 3x faster than Standard mode).
 
 ## Transcript Features
 
