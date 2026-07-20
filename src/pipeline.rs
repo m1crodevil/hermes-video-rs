@@ -37,23 +37,20 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         mut cache,
     } = ctx;
 
-    // ── Step 1: Resolve source ──────────────────────────────────────────
+    // ── Step 1: Materialize all resources upfront ─────────────────────
     let is_url = download::is_url(&cli.source);
-    let mut dl_result: download::DownloadResult;
-
-    if is_url {
-        eprintln!("[watch2] fetching metadata/captions...");
-        dl_result = download::fetch_captions(&cli.source, &download_dir, cli.cookies, None)?;
-        // Store subtitles in cache
-        if let Some(ref mut c) = cache {
-            if let Some(ref sp) = dl_result.subtitle_path {
-                let _ = c.store_subtitles(&cli.source, "en", sp);
-            }
-            let _ = c.store_info(&cli.source, &dl_result.info);
-        }
+    let (mut dl_result, mut scene_boundaries) = if is_url {
+        ensure_resources(
+            &cli.source,
+            &download_dir,
+            &mut cache,
+            cli.cookies,
+            cli.no_cache,
+            None,
+        )?
     } else {
-        dl_result = download::resolve_local(&cli.source)?;
-    }
+        (download::resolve_local(&cli.source)?, vec![])
+    };
 
     // ── Step 1b: LLM language detection ────────────────────────────────
     // Skip LLM when metadata already has language (saves ~1-2s + API cost)
@@ -161,6 +158,7 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
                     &transcript_source,
                     &dl_result,
                     llm_lang.as_deref(),
+                    &scene_boundaries,
                 );
             }
         }
@@ -206,20 +204,10 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
     };
 
     if detail != DetailMode::Transcript {
-        // Download if needed
-        if video_path.is_none() && is_url {
-            eprintln!("[watch2] downloading video...");
-            dl_result = download::download_video(&cli.source, &download_dir, cli.cookies, llm_lang.as_deref())?;
-            video_path = dl_result.video_path.clone();
-
-            if let Some(ref vp) = video_path {
-                if let Ok(meta) = frames::get_metadata(vp) {
-                    duration = meta.duration;
-                }
-                // Store video in cache
-                if let Some(ref mut c) = cache {
-                    let _ = c.store_video(&cli.source, vp);
-                }
+        // Video should already be available from ensure_resources()
+        if let Some(ref vp) = video_path {
+            if let Ok(meta) = frames::get_metadata(vp) {
+                duration = meta.duration;
             }
         }
 
@@ -580,28 +568,141 @@ fn extract_frames_inner(
     })
 }
 
-/// Download video for scene detection in Phase 1.
-/// Uses same 720p cap format as Phase 2 download.
-/// Returns None if download fails (Phase 1 continues with transcript-only).
-fn download_for_scene_detection(
-    cli: &cli::Cli,
+/// Materialize all resources upfront: video + subtitles + scene boundaries.
+/// Cache-first with retry (3 attempts, exponential backoff).
+/// Returns (DownloadResult, scene_boundaries).
+fn ensure_resources(
+    source: &str,
     download_dir: &std::path::Path,
+    cache: &mut Option<crate::cache::VideoCache>,  // mutable for cache store
+    use_cookies: bool,
+    no_cache: bool,
     llm_lang: Option<&str>,
-) -> Option<std::path::PathBuf> {
-    eprintln!("[watch2] Phase 1: Downloading video for scene detection...");
-    match crate::download::download_video(&cli.source, download_dir, cli.cookies, llm_lang) {
-        Ok(result) => {
-            if let Some(ref vp) = result.video_path {
-                eprintln!("[watch2] ✅ Video downloaded for scene detection ({} MB)",
-                    std::fs::metadata(vp).map(|m| m.len() / (1024 * 1024)).unwrap_or(0));
+) -> anyhow::Result<(crate::download::DownloadResult, Vec<crate::scene_detect::SceneBoundary>)> {
+    // 1. Check cache for existing video
+    if !no_cache {
+        if let Some(c) = cache {
+            if let Some(cached_video) = c.get_video(source) {
+                if cached_video.exists()
+                    && cached_video
+                        .metadata()
+                        .map(|m| m.len() > 1_000_000)
+                        .unwrap_or(false)
+                {
+                    eprintln!("[watch2] ✓ video from cache: {:?}", cached_video);
+                    let dest = download_dir.join("video.mp4");
+                    std::fs::copy(&cached_video, &dest)?;
+
+                    // Load subtitles from cache
+                    let info = c.get_info(source).unwrap_or_default();
+                    let subtitle_path = c
+                        .get_subtitles(source, &info.language.clone().unwrap_or_default())
+                        .and_then(|sp| {
+                            let file_name = sp.file_name()?.to_string_lossy().to_string();
+                            let dest = download_dir.join(&file_name);
+                            std::fs::copy(&sp, &dest).ok()?;
+                            Some(dest)
+                        });
+
+                    // Run scene detection on cached video
+                    let fps = 30.0;
+                    let duration = info.duration.unwrap_or(0.0);
+                    let scene_boundaries = match crate::scene_detect::detect(&dest, fps, duration)
+                    {
+                        Ok(r) => {
+                            eprintln!(
+                                "[watch2] ✓ {} scenes from cache ({:?})",
+                                r.total_scenes(),
+                                std::time::Duration::from_millis(r.detection_time_ms)
+                            );
+                            r.boundaries
+                        }
+                        Err(e) => {
+                            eprintln!("[watch2] scene detection failed: {}", e);
+                            vec![]
+                        }
+                    };
+
+                    return Ok((
+                        crate::download::DownloadResult {
+                            video_path: Some(dest),
+                            subtitle_path,
+                            title: info.title.clone(),
+                            info,
+                            downloaded: false,
+                        },
+                        scene_boundaries,
+                    ));
+                }
             }
-            result.video_path
-        }
-        Err(e) => {
-            eprintln!("[watch2] ⚠️  Video download failed: {}. Proceeding with transcript-only.", e);
-            None
         }
     }
+
+    // 2. Cache miss — download with retry
+    let max_retries = 3;
+    let mut last_error: Option<crate::error::WatchError> = None;
+
+    for attempt in 1..=max_retries {
+        eprintln!(
+            "[watch2] downloading (attempt {}/{})...",
+            attempt, max_retries
+        );
+
+        match crate::download::download_video(source, download_dir, use_cookies, llm_lang) {
+            Ok(mut result) => {
+                // 3. Store to cache immediately
+                if let Some(c) = cache {
+                    if let Some(ref vp) = result.video_path {
+                        let _ = c.store_video(source, vp);
+                        eprintln!("[watch2] ✓ video cached");
+                    }
+                    if let Some(ref sp) = result.subtitle_path {
+                        let _ = c.store_subtitles(
+                            source,
+                            &result.info.language.clone().unwrap_or_default(),
+                            sp,
+                        );
+                    }
+                    let _ = c.store_info(source, &result.info);
+                }
+
+                // 4. Run scene detection on downloaded video
+                if let Some(ref vp) = result.video_path {
+                    let fps = 30.0;
+                    let duration = result.info.duration.unwrap_or(0.0);
+                    match crate::scene_detect::detect(vp, fps, duration) {
+                        Ok(r) => {
+                            eprintln!(
+                                "[watch2] ✓ {} scenes detected ({:?})",
+                                r.total_scenes(),
+                                std::time::Duration::from_millis(r.detection_time_ms)
+                            );
+                            return Ok((result, r.boundaries));
+                        }
+                        Err(e) => {
+                            eprintln!("[watch2] scene detection failed: {}", e);
+                            return Ok((result, vec![]));
+                        }
+                    }
+                }
+
+                return Ok((result, vec![]));
+            }
+            Err(e) => {
+                eprintln!("[watch2] ✗ download failed: {}", e);
+                last_error = Some(e);
+                if attempt < max_retries {
+                    let delay = std::time::Duration::from_secs(2u64.pow(attempt as u32));
+                    eprintln!("[watch2] retrying in {}s...", delay.as_secs());
+                    std::thread::sleep(delay);
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        crate::error::WatchError::Download("all download attempts failed".into())
+    }).into())
 }
 
 /// Run scene detection for Phase 1 moment detection.
@@ -680,11 +781,12 @@ fn run_transcript_moments_phase1(
     cli: &cli::Cli,
     detail: &DetailMode,
     work: &PathBuf,
-    download_dir: &std::path::Path,
+    _download_dir: &std::path::Path,
     transcript_segments: &[crate::output::TranscriptSegment],
-    transcript_source: &str,
+    _transcript_source: &str,
     dl_result: &download::DownloadResult,
-    llm_lang: Option<&str>,
+    _llm_lang: Option<&str>,
+    scene_boundaries: &[crate::scene_detect::SceneBoundary],
 ) -> anyhow::Result<WatchReport> {
     eprintln!("[watch2] Phase 1: Generating moment detection prompt...");
     let transcript_text =
@@ -706,13 +808,34 @@ fn run_transcript_moments_phase1(
         prompt_path.display()
     );
 
+    // Generate fused prompt if scene data available
+    if !scene_boundaries.is_empty() {
+        let scene_text = crate::fusion::format_scene_changes_for_prompt(scene_boundaries);
+        let fused = crate::fusion::fuse_scenes_and_transcript(
+            scene_boundaries, transcript_segments, dl_result.info.duration.unwrap_or(0.0),
+        );
+        let fusion_text = crate::fusion::format_fusion_data_for_prompt(&fused);
+        
+        let fused_prompt = crate::moments::generate_fused_prompt(
+            &transcript_text, &fusion_text, &scene_text,
+            &dl_result.info.title,
+            dl_result.info.uploader.as_deref().unwrap_or("Unknown"),
+            dl_result.info.duration.unwrap_or(0.0),
+            cli.max_moments, cli.min_moments,
+        );
+        let fused_prompt_path = work.join("fused_moments_prompt.txt");
+        std::fs::write(&fused_prompt_path, &fused_prompt)?;
+        eprintln!("[watch2] ✅ Fused prompt written to {} (transcript + {} scenes)", fused_prompt_path.display(), scene_boundaries.len());
+    }
+
     eprintln!();
     eprintln!("📋 Agent workflow:");
-    eprintln!("  1. Send moments_prompt.txt to an LLM to identify key moments");
-    eprintln!("  2. Save the LLM JSON response as an array to:");
+    eprintln!("  1. If fused_moments_prompt.txt exists → use it (better quality)");
+    eprintln!("  2. Otherwise → use moments_prompt.txt (transcript-only)");
+    eprintln!("  3. Send the prompt to an LLM to identify key moments");
+    eprintln!("  4. Save the LLM JSON response as an array to:");
     eprintln!("     {}", work.join("key_moments.json").display());
-    eprintln!("  3. Re-run this command to extract frames at those moments");
-    eprintln!("  4. Scene detection runs automatically in Phase 2 (after video download)");
+    eprintln!("  5. Re-run this command to extract frames at those moments");
     eprintln!();
 
     let title = if dl_result.title.is_empty() || dl_result.title == "Unknown" {
@@ -731,7 +854,7 @@ fn run_transcript_moments_phase1(
         frames: vec![],
         frames_dropped: 0,
         transcript: transcript_segments.to_vec(),
-        transcript_source: transcript_source.to_string(),
+        transcript_source: _transcript_source.to_string(),
         duration: dl_result.info.duration.unwrap_or(0.0),
         working_dir: work.to_string_lossy().to_string(),
         warnings: vec!["Phase 1 complete — waiting for key_moments.json".into()],
@@ -830,12 +953,15 @@ fn run_transcript_moments_phase2(
         timestamps.len()
     );
 
-    // Download video if needed
+    // Video should already be available from ensure_resources() in run()
+    // If not available, this is an error
     if video_path.is_none() && is_url {
-        eprintln!("[watch2] Downloading video for frame extraction...");
-        *dl_result = download::download_video(&cli.source, download_dir, cli.cookies, llm_lang)?;
-        *video_path = dl_result.video_path.clone();
-        if let Some(vp) = video_path.as_ref() {
+        eprintln!("[watch2] ⚠️  No video available for frame extraction");
+    }
+    
+    // Get duration if not yet set
+    if *duration <= 0.0 {
+        if let Some(vp) = video_path {
             if let Ok(meta) = frames::get_metadata(vp) {
                 *duration = meta.duration;
             }
@@ -967,11 +1093,12 @@ fn cleanup(
     cli: &cli::Cli,
     work: &PathBuf,
     video_path: &std::option::Option<PathBuf>,
-    dl_result: &download::DownloadResult,
+    _dl_result: &download::DownloadResult,
 ) {
     if !cli.keep_video {
         if let Some(vp) = video_path {
-            if dl_result.downloaded {
+            // Only delete if it's in our workdir (not a cached copy)
+            if vp.starts_with(work) && vp.exists() {
                 let size_mb = std::fs::metadata(vp)
                     .map(|m| m.len() / (1024 * 1024))
                     .unwrap_or(0);
@@ -981,7 +1108,10 @@ fn cleanup(
                 }
             }
         }
+    } else {
+        eprintln!("[watch2] keeping video (--keep-video)");
     }
+    // Cache is never cleaned up here — managed by eviction policy
 
     // Cleanup audio temp files
     let audio_tmp = work.join("audio.mp3");
