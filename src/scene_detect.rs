@@ -126,9 +126,9 @@ fn detect_with_av_scenechange(video_path: &Path, fps: f64) -> Result<SceneDetect
         }
     };
 
-    // Configure detection options
+    // Configure detection options — use Fast for balanced mode speed
     let opts = DetectionOptions {
-        analysis_speed: SceneDetectionSpeed::Standard,
+        analysis_speed: SceneDetectionSpeed::Fast,
         detect_flashes: false,
         min_scenecut_distance: Some(24),
         max_scenecut_distance: Some(250),
