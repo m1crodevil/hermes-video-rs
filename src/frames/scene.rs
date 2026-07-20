@@ -1,7 +1,7 @@
 use std::path::Path;
 use crate::error::{WatchError, Result};
 use crate::output::FrameInfo;
-use super::{FrameMeta, MAX_FPS, MAX_READ_DIMENSION, SCENE_MIN_FRAMES, even_sample, get_metadata, extract_frames};
+use super::{FrameMeta, MAX_FPS, MAX_READ_DIMENSION, SCENE_MIN_FRAMES, even_sample, extract_frames, get_metadata, score_based_select};
 
 pub fn extract_scene_or_uniform(
     video_path: &Path,
@@ -13,6 +13,7 @@ pub fn extract_scene_or_uniform(
     start_seconds: Option<f64>,
     end_seconds: Option<f64>,
     dedup: bool,
+    scene_boundaries: Option<&[crate::scene_detect::SceneBoundary]>,
 ) -> Result<(Vec<FrameInfo>, FrameMeta)> {
     let video_str = video_path.to_str().unwrap_or("<invalid path>");
     std::fs::create_dir_all(out_dir)?;
@@ -93,9 +94,19 @@ pub fn extract_scene_or_uniform(
             meta_video.duration, target_frames as usize,
         )?;
 
-        // Even-sample down to cap
+        // Score-based selection if av-scenechange boundaries available, else even-sample
         let cap = max_frames as usize;
-        even_sample(&mut candidates, cap);
+        if let Some(boundaries) = scene_boundaries {
+            let scores: Vec<f64> = candidates.iter().map(|f| {
+                boundaries.iter()
+                    .find(|b| f.timestamp >= b.start_sec && f.timestamp < b.end_sec)
+                    .map(|b| b.significance())
+                    .unwrap_or(0.0)
+            }).collect();
+            super::score_based_select(&mut candidates, cap, &scores);
+        } else {
+            even_sample(&mut candidates, cap);
+        }
 
         let meta = FrameMeta {
             engine: "scene".to_string(),

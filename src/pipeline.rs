@@ -226,7 +226,7 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         if let Some(ref vp) = video_path {
             let result = extract_frames_inner(
                 vp, &cli, &detail, &frames_dir, max_frames, duration,
-                &transcript_segments,
+                &transcript_segments, &scene_boundaries,
             );
             match result {
                 Ok(r) => {
@@ -357,6 +357,7 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         key_moment_stats,
         fused_moments,
         scene_count,
+        scene_boundaries,
     );
 
     // ── Step 9: Show stats ──────────────────────────────────────────────
@@ -390,6 +391,7 @@ fn extract_frames_inner(
     max_frames: u32,
     duration: f64,
     transcript_segments: &[crate::output::TranscriptSegment],
+    scene_boundaries: &[crate::scene_detect::SceneBoundary],
 ) -> anyhow::Result<FrameExtractionResult> {
     let focus_start = cli.start.as_ref().and_then(|s| parse_time(Some(s)));
     let focus_end = cli.end.as_ref().and_then(|s| parse_time(Some(s)));
@@ -479,6 +481,7 @@ fn extract_frames_inner(
                 focus_start,
                 focus_end,
                 !cli.no_dedup,
+                Some(&scene_boundaries),
             )?
         }
         DetailMode::TokenBurner => {
@@ -510,6 +513,7 @@ fn extract_frames_inner(
                     focus_start,
                     focus_end,
                     !cli.no_dedup,
+                    None,
                 )?
             } else {
                 let timestamps: Vec<f64> = transcript_segments.iter().map(|s| s.start).collect();
@@ -734,6 +738,7 @@ fn run_transcript_moments_phase1(
         key_moments: None,
         key_moment_stats: None,
         fused_moments: None,
+        scene_boundaries: None,
         scene_count: None,
     })
 }
@@ -940,8 +945,8 @@ fn run_scene_detection(
             *scene_count = Some(result.total_scenes());
             *scene_boundaries = result.boundaries.clone();
 
-            // Fusion-specific outputs (only when --fuse-scenes is set)
-            if fuse_scenes && !transcript_segments.is_empty() {
+            // Generate scene text and fused moments for report
+            if !transcript_segments.is_empty() {
                 *scene_text = crate::fusion::format_scene_changes_for_prompt(&result.boundaries);
                 *fused_moments = crate::fusion::fuse_scenes_and_transcript(
                     &result.boundaries,
@@ -1002,6 +1007,7 @@ fn build_report(
     key_moment_stats: Option<crate::output::KeyMomentStats>,
     fused_moments: Vec<crate::fusion::FusedMoment>,
     scene_count: Option<usize>,
+    scene_boundaries: Vec<crate::scene_detect::SceneBoundary>,
 ) -> WatchReport {
     let mut warnings = Vec::new();
 
@@ -1066,6 +1072,7 @@ fn build_report(
         },
         key_moment_stats,
         fused_moments: if fused_moments.is_empty() { None } else { Some(fused_moments) },
+        scene_boundaries: if scene_boundaries.is_empty() { None } else { Some(scene_boundaries) },
         scene_count,
     }
 }

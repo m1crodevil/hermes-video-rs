@@ -58,6 +58,8 @@ pub struct WatchReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fused_moments: Option<Vec<crate::fusion::FusedMoment>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub scene_boundaries: Option<Vec<crate::scene_detect::SceneBoundary>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub scene_count: Option<usize>,
 }
 
@@ -144,6 +146,7 @@ mod tests {
             key_moments: None,
             key_moment_stats: None,
             fused_moments: None,
+            scene_boundaries: None,
             scene_count: None,
         };
         let md = report.to_markdown();
