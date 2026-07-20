@@ -1,6 +1,6 @@
 ---
 name: watch2
-version: "4.8.0"
+version: "4.9.0"
 description: "Watch a video (URL or local path). Rust-powered analysis with frame extraction and transcript generation."
 argument-hint: " <url-or-path> [question]"
 allowed-tools: Bash, Read, AskUserQuestion
@@ -525,6 +525,18 @@ search_files \
 ```
 
 Cross-reference with frame timestamps to confirm visual context, then compile top 10-15 moments as a table with: `# | Timestamp | Topic | Quote`.
+
+### av-scenechange Fallback to ffmpeg
+
+When av-scenechange library API fails (VariableFormat, VariableFramerate, unsupported codec), the binary gracefully falls back to ffmpeg scene detection with adaptive thresholds. Warning is printed but no crash.
+
+**Fallback behavior:** No scoring data available in fallback mode (ffmpeg scene detection doesn't provide scores). Frame selection falls back to `even_sample()` instead of `score_based_select()`.
+
+### CJK/Unicode Character Safety
+
+String truncation uses `chars().take(N)` instead of byte slicing (`[..N]`). Multi-byte characters (Korean 3 bytes, Chinese 3 bytes, Emoji 4 bytes) would panic with byte slicing if the cut falls mid-character.
+
+**Rule:** Never use `str[..N]` for truncation on user-provided text. Always use `chars().take(N).collect::<String>()`.
 
 ### Vision Model Misidentifying Speakers
 
