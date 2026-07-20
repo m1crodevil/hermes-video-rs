@@ -157,14 +157,9 @@ pub fn fuse_scenes_and_transcript(
                 }
 
                 let priority = if w.confidence <= 50 { 1 } else { 2 };
+                let fallback_scene = SceneBoundary::new(0.0, f64::INFINITY, 0.0, 0, 0);
                 let (scene_idx, scene) = find_containing_scene(scenes, w.start)
-                    .unwrap_or((0, &SceneBoundary {
-                        start_sec: 0.0,
-                        end_sec: f64::INFINITY,
-                        duration_sec: f64::INFINITY,
-                        frame_start: 0,
-                        frame_end: 0,
-                    }));
+                    .unwrap_or((0, &fallback_scene));
 
                 moments.push(FusedMoment {
                     timestamp: w.start,
@@ -200,12 +195,16 @@ pub fn format_scene_changes_for_prompt(scenes: &[SceneBoundary]) -> String {
         .iter()
         .enumerate()
         .map(|(i, s)| {
+            let score_str = s.inter_cost
+                .map(|c| format!(" [score: {:.1}]", c))
+                .unwrap_or_default();
             format!(
-                "Scene {}: {} - {} ({:.1}s)",
+                "Scene {}: {} - {} ({:.1}s){}",
                 i + 1,
                 format_timestamp(s.start_sec),
                 format_timestamp(s.end_sec),
-                s.duration_sec
+                s.duration_sec,
+                score_str
             )
         })
         .collect::<Vec<_>>()
@@ -256,13 +255,7 @@ mod tests {
     use super::*;
 
     fn make_scene(start: f64, end: f64) -> SceneBoundary {
-        SceneBoundary {
-            start_sec: start,
-            end_sec: end,
-            duration_sec: end - start,
-            frame_start: (start * 24.0) as u64,
-            frame_end: (end * 24.0) as u64,
-        }
+        SceneBoundary::new(start, end, 24.0, (start * 24.0) as u64, (end * 24.0) as u64)
     }
 
     fn make_word(word: &str, start: f64, confidence: i32) -> WordTiming {

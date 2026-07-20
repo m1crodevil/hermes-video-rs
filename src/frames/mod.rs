@@ -84,6 +84,62 @@ pub(crate) fn even_sample(frames: &mut Vec<FrameInfo>, cap: usize) {
     }
 }
 
+/// Select frames prioritized by scene significance score.
+/// Always includes first and last frames.
+pub(crate) fn score_based_select(
+    frames: &mut Vec<FrameInfo>,
+    cap: usize,
+    scores: &[f64],
+) {
+    let count = frames.len();
+    if cap >= count || count == 0 || scores.len() != count {
+        return;
+    }
+
+    // Always keep first frame
+    let mut indices: Vec<usize> = vec![0];
+
+    // Sort remaining frames by score (descending)
+    let mut scored: Vec<(usize, f64)> = frames.iter().enumerate()
+        .skip(1)
+        .zip(scores.iter().skip(1))
+        .map(|((i, _), &s)| (i, s))
+        .collect();
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Take top (cap - 2) frames
+    let budget = cap.saturating_sub(2);
+    for (i, _) in scored.into_iter().take(budget) {
+        if !indices.contains(&i) {
+            indices.push(i);
+        }
+    }
+
+    // Always keep last frame
+    let last = count - 1;
+    if !indices.contains(&last) {
+        indices.push(last);
+    }
+
+    indices.sort();
+
+    // Remove frames not in selection
+    let keep: std::collections::HashSet<usize> = indices.into_iter().collect();
+    let mut removed_paths = Vec::new();
+    let mut i = 0;
+    frames.retain(|f| {
+        let keep_frame = keep.contains(&i);
+        if !keep_frame {
+            removed_paths.push(f.path.clone());
+        }
+        i += 1;
+        keep_frame
+    });
+    for p in &removed_paths {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
 pub(crate) fn scale_filter(resolution: u32) -> String {
     format!(
         "scale=w='min({resolution},iw)':h='min({MAX_READ_DIMENSION},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2"

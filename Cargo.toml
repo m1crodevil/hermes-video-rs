@@ -27,6 +27,7 @@ chrono = "0.4"
 tempfile = "3"
 which = "7"
 regex = "1"
+av-scenechange = { version = "0.24", features = ["ffmpeg"] }
 
 [features]
 default = []

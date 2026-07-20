@@ -4,7 +4,7 @@ use std::process::Command;
 
 use crate::error::{Result, WatchError};
 
-/// A single scene segment with frame-accurate boundaries.
+/// A single scene segment with frame-accurate boundaries and scoring data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SceneBoundary {
     pub start_sec: f64,
@@ -12,6 +12,12 @@ pub struct SceneBoundary {
     pub duration_sec: f64,
     pub frame_start: u64,
     pub frame_end: u64,
+    // Scoring data from av-scenechange library
+    pub inter_cost: Option<f64>,
+    pub imp_block_cost: Option<f64>,
+    pub backward_adjusted_cost: Option<f64>,
+    pub forward_adjusted_cost: Option<f64>,
+    pub threshold: Option<f64>,
 }
 
 impl SceneBoundary {
@@ -22,7 +28,40 @@ impl SceneBoundary {
             duration_sec: end_sec - start_sec,
             frame_start,
             frame_end,
+            inter_cost: None,
+            imp_block_cost: None,
+            backward_adjusted_cost: None,
+            forward_adjusted_cost: None,
+            threshold: None,
         }
+    }
+
+    /// Create with scoring data from av-scenechange library.
+    pub fn with_score(
+        start_sec: f64, end_sec: f64, _fps: f64,
+        frame_start: u64, frame_end: u64,
+        inter_cost: f64, imp_block_cost: f64,
+        backward_adjusted_cost: f64, forward_adjusted_cost: f64,
+        threshold: f64,
+    ) -> Self {
+        Self {
+            start_sec, end_sec,
+            duration_sec: end_sec - start_sec,
+            frame_start, frame_end,
+            inter_cost: Some(inter_cost),
+            imp_block_cost: Some(imp_block_cost),
+            backward_adjusted_cost: Some(backward_adjusted_cost),
+            forward_adjusted_cost: Some(forward_adjusted_cost),
+            threshold: Some(threshold),
+        }
+    }
+
+    /// Composite significance score (higher = more significant scene change).
+    pub fn significance(&self) -> f64 {
+        self.inter_cost.unwrap_or(0.0)
+            + self.imp_block_cost.unwrap_or(0.0) * 10.0
+            + self.backward_adjusted_cost.unwrap_or(0.0)
+            + self.forward_adjusted_cost.unwrap_or(0.0)
     }
 }
 
@@ -40,28 +79,7 @@ impl SceneDetectionResult {
     }
 }
 
-/// Parse av-scenechange JSON output (format: {"scene_changes":[0,24,50,...]})
-/// into SceneBoundary list.
-pub fn parse_av_scenechange_output(json: &str, fps: f64) -> Vec<SceneBoundary> {
-    let data: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
-    let frames = data["scene_changes"]
-        .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_u64()).collect::<Vec<_>>())
-        .unwrap_or_default();
-
-    let mut boundaries = Vec::with_capacity(frames.len());
-    for (i, &frame) in frames.iter().enumerate() {
-        let start_sec = frame as f64 / fps;
-        let end_sec = frames.get(i + 1).map_or(f64::INFINITY, |&f| f as f64 / fps);
-        let frame_end = frames.get(i + 1).copied().unwrap_or(0);
-        boundaries.push(SceneBoundary::new(
-            start_sec, end_sec, fps, frame, frame_end,
-        ));
-    }
-    boundaries
-}
-
-/// Convert existing timestamp list (from ffmpeg scene filter) to SceneBoundary list.
+/// Convert timestamp list to SceneBoundary list (kept for external callers).
 pub fn timestamps_to_boundaries(timestamps: &[f64], fps: f64, duration: f64) -> Vec<SceneBoundary> {
     let mut boundaries = Vec::with_capacity(timestamps.len());
     for (i, &ts) in timestamps.iter().enumerate() {
@@ -96,22 +114,53 @@ pub fn detect(video_path: &Path, fps: f64, _duration: f64) -> Result<SceneDetect
 }
 
 fn detect_with_av_scenechange(video_path: &Path, fps: f64) -> Result<SceneDetectionResult> {
-    // Use --speed 1 for faster detection (3x faster, acceptable quality for balanced mode)
-    let output = Command::new("av-scenechange")
-        .args(["--speed", "1", "--min-scenecut", "24", video_path.to_str().unwrap_or("")])
-        .output()
-        .map_err(|e| WatchError::Ffmpeg(format!("av-scenechange failed to run: {e}")))?;
+    use av_scenechange::{Decoder, DetectionOptions, SceneDetectionSpeed};
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(WatchError::Ffmpeg(format!(
-            "av-scenechange exited with {}: {}",
-            output.status, stderr
-        )));
-    }
+    // Create decoder from video file (auto-selects backend: ffmpeg/ffms2/y4m)
+    let mut decoder = Decoder::from_file(video_path)
+        .map_err(|e| WatchError::Ffmpeg(format!("av-scenechange decoder init failed: {e}")))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let boundaries = parse_av_scenechange_output(&stdout, fps);
+    // Configure detection options
+    let opts = DetectionOptions {
+        analysis_speed: SceneDetectionSpeed::Standard,
+        detect_flashes: false,
+        min_scenecut_distance: Some(24),
+        max_scenecut_distance: Some(250),
+        ..DetectionOptions::default()
+    };
+
+    // Run scene detection
+    let results = av_scenechange::detect_scene_changes::<u8>(
+        &mut decoder, opts, None, None,
+    )
+    .map_err(|e| WatchError::Ffmpeg(format!("av-scenechange detection failed: {e}")))?;
+
+    eprintln!(
+        "[watch2] av-scenechange: {} scenes detected ({} fps)",
+        results.scene_changes.len(),
+        results.speed
+    );
+
+    // Convert DetectionResults → Vec<SceneBoundary> WITH scores
+    let boundaries: Vec<SceneBoundary> = results.scene_changes.iter().enumerate().map(|(i, &frame)| {
+        let start_sec = frame as f64 / fps;
+        let end_sec = results.scene_changes.get(i + 1)
+            .map_or(f64::INFINITY, |&next| next as f64 / fps);
+        let frame_end = results.scene_changes.get(i + 1).copied().unwrap_or(0);
+
+        // Look up scores for this frame
+        if let Some(score) = results.scores.get(&frame) {
+            SceneBoundary::with_score(
+                start_sec, end_sec, fps,
+                frame as u64, frame_end as u64,
+                score.inter_cost, score.imp_block_cost,
+                score.backward_adjusted_cost, score.forward_adjusted_cost,
+                score.threshold,
+            )
+        } else {
+            SceneBoundary::new(start_sec, end_sec, fps, frame as u64, frame_end as u64)
+        }
+    }).collect();
 
     Ok(SceneDetectionResult {
         boundaries,
