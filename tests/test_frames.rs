@@ -1,14 +1,4 @@
-use watch2::frames::{FrameMeta, SCENE_MIN_FRAMES, KEYFRAME_MIN};
-
-#[test]
-fn test_scene_min_frames() {
-    assert_eq!(SCENE_MIN_FRAMES, 8);
-}
-
-#[test]
-fn test_keyframe_min() {
-    assert_eq!(KEYFRAME_MIN, 4);
-}
+use watch2::frames::FrameMeta;
 
 #[test]
 fn test_frame_meta_fields() {

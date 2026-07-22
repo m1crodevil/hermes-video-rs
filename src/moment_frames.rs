@@ -134,6 +134,7 @@ mod tests {
             path: path.to_string(),
             timestamp,
             reason: "test".to_string(),
+            scene_score: None,
         }
     }
 

@@ -1,17 +1,8 @@
 pub mod metadata;
-pub mod uniform;
-pub mod keyframe;
 pub mod timestamp;
-pub mod scene;
-pub mod two_pass;
-pub mod gap_fill;
-
-use crate::output::FrameInfo;
 
 pub const MAX_FPS: f32 = 2.0;
 const MAX_READ_DIMENSION: u32 = 1998;
-pub const SCENE_MIN_FRAMES: usize = 8;
-pub const KEYFRAME_MIN: usize = 4;
 
 pub struct VideoMetadata {
     pub duration: f64,
@@ -30,11 +21,7 @@ pub struct FrameMeta {
 }
 
 pub use metadata::get_metadata;
-pub use uniform::extract_frames;
-pub use keyframe::extract_keyframes;
 pub use timestamp::extract_at_timestamps;
-pub use scene::extract_scene_or_uniform;
-pub use two_pass::extract_two_pass;
 
 pub fn auto_fps(duration: f64, max_frames: u32) -> f32 {
     if duration <= 0.0 {
@@ -61,83 +48,6 @@ pub(crate) fn even_indices(count: usize, n: usize) -> Vec<usize> {
         return vec![0];
     }
     (0..n).map(|i| (i * (count - 1) / (n - 1)) as usize).collect()
-}
-
-pub(crate) fn even_sample(frames: &mut Vec<FrameInfo>, cap: usize) {
-    let count = frames.len();
-    if cap >= count || count == 0 {
-        return;
-    }
-    let indices: std::collections::HashSet<usize> = even_indices(count, cap).into_iter().collect();
-    let mut removed_paths = Vec::new();
-    let mut i = 0;
-    frames.retain(|f| {
-        let keep = indices.contains(&i);
-        if !keep {
-            removed_paths.push(f.path.clone());
-        }
-        i += 1;
-        keep
-    });
-    for p in &removed_paths {
-        let _ = std::fs::remove_file(p);
-    }
-}
-
-/// Select frames prioritized by scene significance score.
-/// Always includes first and last frames.
-pub(crate) fn score_based_select(
-    frames: &mut Vec<FrameInfo>,
-    cap: usize,
-    scores: &[f64],
-) {
-    let count = frames.len();
-    if cap >= count || count == 0 || scores.len() != count {
-        return;
-    }
-
-    // Always keep first frame
-    let mut indices: Vec<usize> = vec![0];
-
-    // Sort remaining frames by score (descending)
-    let mut scored: Vec<(usize, f64)> = frames.iter().enumerate()
-        .skip(1)
-        .zip(scores.iter().skip(1))
-        .map(|((i, _), &s)| (i, s))
-        .collect();
-    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-    // Take top (cap - 2) frames
-    let budget = cap.saturating_sub(2);
-    for (i, _) in scored.into_iter().take(budget) {
-        if !indices.contains(&i) {
-            indices.push(i);
-        }
-    }
-
-    // Always keep last frame
-    let last = count - 1;
-    if !indices.contains(&last) {
-        indices.push(last);
-    }
-
-    indices.sort();
-
-    // Remove frames not in selection
-    let keep: std::collections::HashSet<usize> = indices.into_iter().collect();
-    let mut removed_paths = Vec::new();
-    let mut i = 0;
-    frames.retain(|f| {
-        let keep_frame = keep.contains(&i);
-        if !keep_frame {
-            removed_paths.push(f.path.clone());
-        }
-        i += 1;
-        keep_frame
-    });
-    for p in &removed_paths {
-        let _ = std::fs::remove_file(p);
-    }
 }
 
 pub(crate) fn scale_filter(resolution: u32) -> String {

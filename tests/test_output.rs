@@ -18,9 +18,9 @@ fn make_test_report() -> WatchReport {
         warnings: vec!["Test warning".into()],
         key_moments: None,
         key_moment_stats: None,
-        fused_moments: None,
         scene_boundaries: None,
         scene_count: None,
+        scene_scores_path: None,
     }
 }
 
@@ -37,11 +37,13 @@ fn make_full_report() -> WatchReport {
                 path: "/tmp/frame_0001.jpg".into(),
                 timestamp: 0.0,
                 reason: "keyframe".into(),
+                scene_score: None,
             },
             FrameInfo {
                 path: "/tmp/frame_0002.jpg".into(),
                 timestamp: 5.5,
                 reason: "scene".into(),
+                scene_score: None,
             },
         ],
         frames_dropped: 2,
@@ -65,9 +67,9 @@ fn make_full_report() -> WatchReport {
         warnings: vec!["Warning one".into(), "Warning two".into()],
         key_moments: None,
         key_moment_stats: None,
-        fused_moments: None,
         scene_boundaries: None,
         scene_count: None,
+        scene_scores_path: None,
     }
 }
 

@@ -1,7 +1,7 @@
 use clap::Parser;
 use watch2::cache::VideoCache;
 use watch2::cli;
-use watch2::config::{DetailMode, WatchConfig};
+use watch2::config::WatchConfig;
 use watch2::pipeline::{self, PipelineContext};
 use watch2::setup;
 use std::path::PathBuf;
@@ -33,21 +33,6 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("ℹ️  First run detected");
     }
 
-    // Resolve detail mode
-    let detail = cli.detail.as_ref().map(|d| match d {
-        cli::DetailMode::Transcript => DetailMode::Transcript,
-        cli::DetailMode::TranscriptMoments => DetailMode::TranscriptMoments,
-        cli::DetailMode::Efficient => DetailMode::Efficient,
-        cli::DetailMode::Balanced => DetailMode::Balanced,
-        cli::DetailMode::TokenBurner => DetailMode::TokenBurner,
-        cli::DetailMode::ScreenshotFirst => DetailMode::ScreenshotFirst,
-    }).unwrap_or_else(|| config.detail.clone());
-
-    // Frame cap
-    let max_frames = cli.max_frames.unwrap_or_else(|| {
-        config.frame_cap(&detail).unwrap_or(100)
-    });
-
     // Save output format before moving cli into context
     let output_format = cli.output.clone();
 
@@ -73,8 +58,6 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Create working directory
-    // Security: Use RAII cleanup by default to prevent temp dir leaks
-    // _temp_dir lives until end of main() and auto-cleans on drop
     let (work, _temp_dir) = match &cli.out_dir {
         Some(d) => (PathBuf::from(d), None),
         None => {
@@ -93,8 +76,7 @@ async fn main() -> anyhow::Result<()> {
     let ctx = PipelineContext {
         cli,
         config,
-        detail,
-        max_frames,
+        max_frames: 100,
         work: work.clone(),
         download_dir,
         frames_dir,

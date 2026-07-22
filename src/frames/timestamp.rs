@@ -83,6 +83,7 @@ pub fn extract_at_timestamps(
                 path: frame_str,
                 timestamp: t,
                 reason: "transcript-cue".to_string(),
+                scene_score: None,
             });
         }
     }

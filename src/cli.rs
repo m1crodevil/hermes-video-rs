@@ -1,17 +1,5 @@
 use clap::{Parser, ValueEnum};
 
-/// Validate max-frames: 1-1000 to prevent resource exhaustion
-fn validate_max_frames(s: &str) -> Result<u32, String> {
-    let val: u32 = s.parse().map_err(|_| format!("'{s}' is not a valid number"))?;
-    if val == 0 {
-        return Err("max-frames must be at least 1".to_string());
-    }
-    if val > 1000 {
-        return Err("max-frames capped at 1000 to prevent resource exhaustion".to_string());
-    }
-    Ok(val)
-}
-
 /// Validate resolution: 128-4096 pixels
 fn validate_resolution(s: &str) -> Result<u32, String> {
     let val: u32 = s.parse().map_err(|_| format!("'{s}' is not a valid number"))?;
@@ -31,41 +19,21 @@ pub struct Cli {
     /// Video URL or local file path
     pub source: String,
 
-    /// Detail mode: transcript, efficient, balanced, token-burner
-    #[arg(long)]
-    pub detail: Option<DetailMode>,
-
-    /// Frame cap override (1-1000)
-    #[arg(long, value_parser = validate_max_frames)]
-    pub max_frames: Option<u32>,
-
     /// Frame width in pixels (128-4096, default 512)
     #[arg(long, default_value_t = 512, value_parser = validate_resolution)]
     pub resolution: u32,
-
-    /// Override auto-fps (max 2.0)
-    #[arg(long)]
-    pub fps: Option<f32>,
-
-    /// Comma-separated timestamps to grab frames at
-    #[arg(long)]
-    pub timestamps: Option<String>,
-
-    /// Range start (SS, MM:SS, or HH:MM:SS)
-    #[arg(long)]
-    pub start: Option<String>,
-
-    /// Range end (SS, MM:SS, or HH:MM:SS)
-    #[arg(long)]
-    pub end: Option<String>,
 
     /// Working directory
     #[arg(long)]
     pub out_dir: Option<String>,
 
-    /// Force Whisper backend
+    /// Keep downloaded video after processing
     #[arg(long)]
-    pub whisper: Option<WhisperBackend>,
+    pub keep_video: bool,
+
+    /// Use Chrome cookies for authenticated YouTube sessions (opt-in, breaks android_vr)
+    #[arg(long)]
+    pub cookies: bool,
 
     /// Disable Whisper fallback
     #[arg(long)]
@@ -79,34 +47,6 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
     pub output: OutputFormat,
 
-    /// Keep downloaded video after processing
-    #[arg(long)]
-    pub keep_video: bool,
-
-    /// Use Chrome cookies for authenticated YouTube sessions (opt-in, breaks android_vr)
-    #[arg(long)]
-    pub cookies: bool,
-
-    /// Auto-generate moment detection prompt
-    #[arg(long)]
-    pub auto_moments: bool,
-
-    /// Maximum moments to detect
-    #[arg(long, default_value_t = 50)]
-    pub max_moments: u32,
-
-    /// Minimum moments to detect
-    #[arg(long)]
-    pub min_moments: Option<u32>,
-
-    /// Show processing stats at the end
-    #[arg(long)]
-    pub stats: bool,
-
-    /// Stats display format: telegram (rich) or compact (single line)
-    #[arg(long, value_enum, default_value_t = StatsFormat::Telegram)]
-    pub stats_format: StatsFormat,
-
     /// Disable download cache
     #[arg(long)]
     pub no_cache: bool,
@@ -114,45 +54,6 @@ pub struct Cli {
     /// Custom cache directory
     #[arg(long)]
     pub cache_dir: Option<String>,
-
-    /// Use av-scenechange for scene detection (faster than ffmpeg)
-    #[arg(long)]
-    pub use_av_scenechange: bool,
-
-    /// Fuse scene boundaries with transcript for better moment detection
-    #[arg(long)]
-    pub fuse_scenes: bool,
-
-    /// Skip scene detection entirely (use frame extraction metadata for scene count)
-    #[arg(long)]
-    pub no_scene_detection: bool,
-
-    /// Minimum ASR confidence to auto-include as moment candidate (below = candidate)
-    #[arg(long, default_value = "70")]
-    pub confidence_threshold: i32,
-}
-
-#[derive(Clone, Debug, PartialEq, ValueEnum)]
-pub enum DetailMode {
-    Transcript,
-    TranscriptMoments,
-    Efficient,
-    Balanced,
-    TokenBurner,
-    ScreenshotFirst,
-}
-
-impl std::fmt::Display for DetailMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DetailMode::Transcript => write!(f, "transcript"),
-            DetailMode::TranscriptMoments => write!(f, "transcript-moments"),
-            DetailMode::Efficient => write!(f, "efficient"),
-            DetailMode::Balanced => write!(f, "balanced"),
-            DetailMode::TokenBurner => write!(f, "token-burner"),
-            DetailMode::ScreenshotFirst => write!(f, "screenshot-first"),
-        }
-    }
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -174,21 +75,6 @@ impl std::fmt::Display for OutputFormat {
             Self::Markdown => write!(f, "markdown"),
             Self::Json => write!(f, "json"),
             Self::Both => write!(f, "both"),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, ValueEnum)]
-pub enum StatsFormat {
-    Telegram,
-    Compact,
-}
-
-impl std::fmt::Display for StatsFormat {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Telegram => write!(f, "telegram"),
-            Self::Compact => write!(f, "compact"),
         }
     }
 }

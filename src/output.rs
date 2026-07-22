@@ -7,6 +7,8 @@ pub struct FrameInfo {
     pub path: String,
     pub timestamp: f64,
     pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scene_score: Option<f64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -56,11 +58,11 @@ pub struct WatchReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_moment_stats: Option<KeyMomentStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fused_moments: Option<Vec<crate::fusion::FusedMoment>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub scene_boundaries: Option<Vec<crate::scene_detect::SceneBoundary>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scene_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scene_scores_path: Option<String>,
 }
 
 impl WatchReport {
@@ -115,6 +117,9 @@ impl WatchReport {
         if self.frames.is_empty() && self.transcript.is_empty() {
             out.push_str("*No frames or transcript available.*\n");
         }
+        if let Some(ref p) = self.scene_scores_path {
+            out.push_str(&format!("**Scene Scores:** `{}`\n", p));
+        }
         if !self.warnings.is_empty() {
             out.push_str("## Warnings\n\n");
             for w in &self.warnings {
@@ -145,9 +150,9 @@ mod tests {
             warnings: vec![],
             key_moments: None,
             key_moment_stats: None,
-            fused_moments: None,
             scene_boundaries: None,
             scene_count: None,
+            scene_scores_path: None,
         };
         let md = report.to_markdown();
         assert!(md.contains("# Test"));
