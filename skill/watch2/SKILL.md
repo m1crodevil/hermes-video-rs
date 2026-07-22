@@ -1,7 +1,7 @@
 ---
 name: watch2
-version: "5.0.0"
-description: "Watch a video (URL or local path). Rust-powered analysis with frame extraction and transcript generation."
+version: "6.2.0"
+description: "Watch a video (URL or local path). Rust-powered analysis — single linear pipeline, no mode selection needed."
 argument-hint: " <url-or-path> [question]"
 allowed-tools: Bash, Read, AskUserQuestion
 homepage: https://github.com/m1crodevil/hermes-video-rs
@@ -33,7 +33,7 @@ Rust-powered video analysis. Faster startup (~5ms), smaller memory (~5-15MB), si
 - Download only → use `yt-dlp` directly
 - Edit/cut video → use `ffmpeg` directly, or **OxiMedia** (pure Rust, see [references/rust-video-editing.md](references/rust-video-editing.md))
 - Audio transcription only → use `whisper` directly
-- Video without audio and no captions → use `--detail efficient` (keyframes only)
+- Video without audio and no captions → binary auto-selects keyframe extraction
 - Need trim/merge/timeline editing → see [references/rust-video-editing.md](references/rust-video-editing.md) for OxiMedia (pure Rust) or FFmpeg CLI
 
 ## Output Philosophy
@@ -77,10 +77,9 @@ Channel: [Uploader] · Published: [date] | Duration: [time]
 **NEVER fall back to Python scripts when watch2 fails.** This skill is the Rust version. Users who install `/watch2` may NOT have the Python `/watch` skill. Python is not a dependency.
 
 When watch2 fails:
-1. Try a different `--detail` flag first
-2. Check error output from watch2, diagnose the specific failure
-3. Use `ffprobe`/`ffmpeg` CLI directly for metadata checks (these are system tools, not Python)
-4. If the Rust binary has a bug, report it — don't work around it
+1. Check error output from watch2, diagnose the specific failure
+2. Use `ffprobe`/`ffmpeg` CLI directly for metadata checks (these are system tools, not Python)
+3. If the Rust binary has a bug, report it — don't work around it
 
 The **only** acceptable manual interventions:
 1. Using `ffprobe` to check video metadata when watch2 reports zero duration (diagnostic)
@@ -104,7 +103,7 @@ which av-scenechange || echo "Install: cargo install av-scenechange --features f
 | `ffprobe` | Video metadata | ✅ |
 | `yt-dlp` | Video download | ✅ (URLs) |
 
-**av-scenechange** is mandatory and runs on ALL modes that process video (balanced, efficient, token-burner, transcript-moments Phase 2). It is NOT used for `--detail transcript` (text-only mode).
+**av-scenechange** is mandatory for all video processing modes. The binary auto-selects the appropriate pipeline — no manual mode flags needed.
 
 Installation:
 ```bash
@@ -116,84 +115,53 @@ which av-scenechange
 ## Quick Start
 
 ```bash
-# Captioned video (RECOMMENDED — deep analysis)
-watch2 "https://youtu.be/abc" --detail transcript-moments --min-moments 50 --out-dir /tmp/watch-TM
-
-# No captions, scene detection
-watch2 "https://youtu.be/abc" --detail balanced
+# Binary auto-selects analysis mode based on video properties
+watch2 "https://youtu.be/abc" --out-dir /tmp/watch-XXX --output both
 
 # Local file
-watch2 ~/Videos/recording.mp4
+watch2 ~/Videos/recording.mp4 --output both
 
-# Other modes
-watch2 "https://youtu.be/abc" --detail transcript        # No frames, transcript only
-watch2 "https://youtu.be/abc" --detail efficient         # Keyframes, cap 50
-watch2 "https://youtu.be/abc" --detail token-burner      # Two-pass, uncapped
+# Custom resolution
+watch2 "https://youtu.be/abc" --resolution 720 --out-dir /tmp/watch-XXX
 ```
 
 ## Decision Tree
 
 ```
-Video has captions (YouTube auto-captions or manual)?
-├── YES, video >10 min → --detail transcript-moments (deep analysis) ← ALWAYS FIRST
-├── YES, video <10 min → --detail balanced or efficient
-├── NO, has audio → --detail balanced (scene detection)
-└── NO, no audio → --detail transcript (text only)
-```
-
-**Quick check for captions:**
-```bash
-watch2 "URL" --detail transcript  # Fastest — no video download
-# If transcript appears → captions exist → re-run with transcript-moments
+Binary auto-selects analysis mode:
+├── Video has captions → transcript-moments (auto-detected)
+├── Video without captions → scene detection (auto-detected)
+└── Agent reads report.json → vision_analyze on extracted frames
 ```
 
 ## Workflow
 
-### Transcript-First Mode (recommended for videos with captions)
+### Single-Run Pipeline (all modes)
 
-When captions are available, this is the **fastest and most accurate** approach:
+watch2 performs the entire analysis in **one pass** — no re-running needed:
 
-- [ ] Step 1: Run `watch2 "<source>" --detail transcript-moments --min-moments 50 --out-dir <FIXED_DIR>`
-  - **Materialize phase** (automatic, ~30-40s): downloads video + subtitles + runs av-scenechange
-  - Generates `moments_prompt.txt` AND `fused_moments_prompt.txt` (if scene data available)
-  - **CRITICAL: Use `--out-dir` to pin the working directory.**
-  - **VERIFICATION REQUIRED:** After Step 1, check that `<workdir>/moments_prompt.txt` exists.
-- [ ] Step 2: Read prompts — if `fused_moments_prompt.txt` exists, USE IT (better quality with scene boundary scores). Otherwise use `moments_prompt.txt`.
-- [ ] Step 3: Write moments as JSON to `<workdir>/key_moments.json`
-- [ ] Step 3a: **Schema** — `key_moments.json` MUST use this exact format:
-  ```json
-  [
-    {
-      "timestamp": 54.0,
-      "timestamp_fmt": "0:54",
-      "word": "Ragnarok",
-      "context": "Ya kan Ragnarok. Tahu Raknarok?",
-      "reason": "proper_noun",
-      "question": "What game name is displayed on screen?",
-      "priority": 1,
-      "frame_path": null
-    }
-  ]
-  ```
-  - `timestamp` — **f64 seconds** (not MM:SS string!). `0:54` → `54.0`, `2:30` → `150.0`
-  - `timestamp_fmt` — MM:SS string, auto-derived from `timestamp`. Agent MUST provide this.
-  - `frame_path` — always `null` (binary fills it after extraction)
-  - Missing `timestamp_fmt` or `frame_path` → Rust binary parse error
-- [ ] Step 4: Re-run `watch2` with same args including `--out-dir <FIXED_DIR>` (video downloads + frames extracted at all moment timestamps)
-- [ ] Step 5: `vision_analyze` 21+ representative frames (from the 50+ extracted) with specific questions from `key_moments.json`
-  - Collect findings in memory — do NOT write intermediate JSON files (vision_results.json, corrections.json, etc.)
-  - Each finding must be classified: confirmed, corrected, fabrication, unverified, partial
-- [ ] Step 6: Cross-reference gate — transcript × vision × scene (INTERNAL — do NOT output this)
-  - Read `report.json` for structured data (frames, key_moments, stats)
-  - Cross-check every vision finding against transcript text
-  - Classify internally: confirmed ✅, corrected 🔧, fabrication ❓, unverified ⚠️, partial 🔸
-  - **RULE: Do NOT generate summary until all findings are classified**
-  - **Do NOT output the cross-reference table** — it's for your accuracy check only
-- [ ] Step 7: Generate grounded summary
-  - Apply corrections to transcript mentally, then generate summary
-  - If corrections exist and are significant (e.g., vision reveals a name misspelling, a number wrong), mention them briefly in the summary
-  - If no meaningful corrections (common for podcast/talk show formats), skip corrections entirely
-  - **Do NOT output a corrections section or cross-reference table** — the user wants comprehensive understanding of the video content, not a process transparency report
+1. **Run watch2 once** — the binary handles everything automatically:
+   - Downloads video + subtitles
+   - Runs scene detection (av-scenechange)
+   - Parses transcript
+   - Calls LLM (Groq/OpenAI) to select key moments
+   - Extracts frames at selected timestamps
+   - Builds report.json
+
+```bash
+# Single command — binary handles everything
+watch2 "https://youtu.be/abc" --out-dir /tmp/watch-XXX --output both
+```
+
+2. **Agent reads report.json** — contains all structured data (frames, key_moments, stats)
+
+3. **Agent calls vision_analyze** on 21+ extracted frames with specific questions from key_moments.json (if present)
+
+4. **Cross-reference gate** (INTERNAL) — transcript × vision × scene
+   - Classify findings: confirmed ✅, corrected 🔧, fabrication ❓, unverified ⚠️, partial 🔸
+   - **Do NOT output the cross-reference table**
+
+5. **Generate grounded summary** — comprehensive analysis in your response
 
 ### Background Mode (Long Videos >10 min)
 
@@ -202,7 +170,7 @@ For videos longer than 10 minutes, use background mode to avoid terminal timeout
 ```bash
 # Long video — ALWAYS background
 terminal(
-  command='watch2 "https://youtu.be/abc" --detail balanced --stats --out-dir /tmp/watch-XXX',
+  command='watch2 "https://youtu.be/abc" --out-dir /tmp/watch-XXX --output both',
   background=True,
   notify_on_complete=True
 )
@@ -219,7 +187,8 @@ Wait for completion:
 When no captions are available, use scene detection:
 
 ```bash
-watch2 "<source>" --detail balanced
+# Binary auto-selects — just run it
+watch2 "<source>" --out-dir /tmp/watch-XXX --output both
 ```
 
 Then sample ~21 frames evenly and `vision_analyze` strategically.
@@ -240,56 +209,44 @@ Then sample ~21 frames evenly and `vision_analyze` strategically.
 
 ## CLI Options
 
+Binary auto-selects analysis mode internally. No manual mode flags needed.
+
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--detail` | transcript/transcript-moments/efficient/balanced/token-burner/screenshot-first | balanced |
-| `--max-frames N` | Frame cap override | 100 |
-| `--resolution W` | Frame width in px | 512 |
-| `--fps F` | Override auto-fps (max 2.0) | auto |
-| `--start T` | Range start (SS, MM:SS, HH:MM:SS) | none |
-| `--end T` | Range end | none |
-| `--timestamps T` | Comma-separated timestamps for cue frames | none |
-| `--output` | Output format: markdown, json, both | markdown |
-| `--keep-video` | Keep downloaded video after processing | false |
-| `--cookies` | Use Chrome cookies (opt-in, breaks android_vr) | false |
-| `--auto-moments` | Generate moment detection prompt | false |
-| `--max-moments N` | Maximum moments to detect | 50 |
-| `--min-moments N` | Minimum moments to detect (auto-calculated if omitted) | auto |
-| `--stats` | Show analysis statistics | false |
-| `--stats-format` | Stats format: telegram or compact | telegram |
-| `--whisper groq\|openai` | Force Whisper backend | auto |
-| `--no-whisper` | Disable Whisper fallback | false |
-| `--no-dedup` | Keep duplicate frames | false |
-| `--out-dir DIR` | Working directory | tmp |
+| `--resolution W` | Frame width in pixels (128–4096) | 512 |
+| `--out-dir DIR` | Custom working directory | temp dir |
+| `--keep-video` | Retain downloaded video after processing | false |
+| `--cookies` | Use Chrome cookies for yt-dlp (age-restricted videos) | false |
+| `--no-whisper` | Disable Whisper fallback transcription | false |
+| `--no-dedup` | Keep near-duplicate frames | false |
+| `--output markdown\|json\|both` | Output format | markdown |
 | `--no-cache` | Disable download cache | false |
-| `--cache-dir DIR` | Custom cache directory | ~/.cache/watch2/ |
+| `--cache-dir DIR` | Custom cache directory | `~/.cache/watch2` |
 
-## Detail Modes
+> **Note**: The binary internally selects the optimal analysis pipeline based on captions availability, video duration, and scene complexity. Check the `engine` field in `report.json` to see which pipeline was used.
 
-| Mode | When | Speed | Accuracy |
-|------|------|-------|----------|
-| **transcript-moments** | ✅ Video with captions (YouTube auto/manual) | ~15s phase1 + frame extraction | ⭐⭐⭐ Highest |
-| **balanced** | Video without captions, need visual coverage | ~300s for 58min | ⭐⭐ Good |
-| **efficient** | Quick overview, hard cuts, short videos | ~10-20s | ⭐ Basic |
-| **transcript** | Dialogue-heavy, no visual needed | ~5s | ⭐⭐ (audio only) |
-| **token-burner** | Max fidelity, short videos | ~500s+ | ⭐⭐⭐ Highest |
-| **screenshot-first** | Long videos with captions, speed priority | ~35s | ⭐⭐ Good |
+## Analysis Modes (Internal)
 
-**Rule of thumb:** For videos >10 min with captions, ALWAYS use `transcript-moments`. It's the most accurate path — auto-captions (especially non-English) contain errors that only visual verification catches.
+The binary auto-selects the optimal pipeline. Check `report.json` → `engine` field to see which was used:
+
+| Engine | When Selected | Description |
+|--------|---------------|-------------|
+| `transcript-moments` | Captions available | LLM selects key moments from transcript, frames extracted at those timestamps |
+| `scene` | No captions, scene-rich | Scene detection via av-scenechange, frames at scene boundaries |
+| `keyframe` | No captions, few scenes | I-frame extraction via ffmpeg |
+| `uniform` | Fallback | Fixed fps extraction when other methods yield too few frames |
+
+The agent receives the result via `report.json` which includes frames, transcript, and key moment metadata.
 
 ## Frame Engines
 
 | Engine | When Used | How It Works |
 |--------|-----------|--------------|
-| **av-scenechange** | All modes with video (mandatory) | Rust library API (`Decoder::from_file` + `detect_scene_changes`). Provides scene boundaries WITH scoring data (inter_cost, imp_block_cost, etc.) for significance-based frame selection. Runs on balanced, efficient, token-burner, transcript-moments Phase 2 |
-
-**av-scenechange** provides scoring data via `ScenecutResult`: `inter_cost`, `imp_block_cost`, `backward_adjusted_cost`, `forward_adjusted_cost`, `threshold`. Higher scores = more significant scene changes. Used for `score_based_select()` and significance filtering.
-| **scene** | balanced fallback | ffmpeg `select='gt(scene,T)'` → extract at cuts. T is adaptive (0.12-0.25 based on duration) |
-| **two-pass** | token-burner | Pass 1: av-scenechange (uncapped). Pass 2: uniform at 50% density. Merge + dedup |
-| **keyframe** | efficient, ≥4 I-frames | ffmpeg `-skip_frame nokey` → I-frames only |
-| **uniform** | fallback when scene/keyframe too few | Fixed fps extraction |
-| **gap-fill** | balanced, large gaps between scenes | Uniform frames inserted in gaps >2× expected interval |
-| **transcript-cue** | `--timestamps` flag | One frame per timestamp (pinned) |
+| **av-scenechange** | All modes with video (mandatory) | Rust library API (`Decoder::from_file` + `detect_scene_changes`). Provides scene boundaries with scoring data. |
+| **scene** | Fallback when av-scenechange fails | ffmpeg `select='gt(scene,T)'` with adaptive thresholds |
+| **keyframe** | No captions, ≥4 I-frames | ffmpeg `-skip_frame nokey` → I-frames only |
+| **uniform** | Fallback | Fixed fps extraction when scene/keyframe yield too few frames |
+| **transcript-cue** | LLM-selected moments | One frame per key moment timestamp |
 
 **av-scenechange** is now used as a Rust library (not CLI subprocess). The library API returns `DetectionResults` with `scene_changes: Vec<usize>` AND `scores: BTreeMap<usize, ScenecutResult>` containing per-frame scoring data. Uses `SceneDetectionSpeed::Fast` (pixel-wise comparison, 3x faster than Standard mode).
 
@@ -298,6 +255,7 @@ Then sample ~21 frames evenly and `vision_analyze` strategically.
 - **Range filtering**: `--start`/`--end` filters both frames AND transcript segments
 - **Word-level timing**: JSON3 subtitles include per-word timestamps + ASR confidence
 - **Language detection**: Auto-selects best subtitle language (26 languages supported)
+- **Auto mode selection**: Binary automatically selects optimal pipeline based on transcript availability
 
 ## Output Formats
 
@@ -312,18 +270,52 @@ watch2 video.mp4 --output json | jq .
 watch2 video.mp4 --output both
 ```
 
+## Reading report.json
+
+`report.json` contains all structured data. Use `jq` for extraction:
+
+```bash
+# Quick metadata
+rtk jq '{title, uploader, language, engine}' report.json
+
+# Frame list with timestamps
+rtk jq '.frames[] | {path, timestamp, reason}' report.json
+
+# Transcript with timestamps
+rtk jq -r '.transcript[] | "[\(.start) → \(.end)] \(.text)"' report.json
+
+# Key moments (if available)
+rtk jq '.key_moments[] | {timestamp, reason}' report.json
+```
+
+**Avoid**: `cat report.json | python3 -c "..."` — violates Rust-only rule. Use `jq` instead.
+
 ## Stats Collection (Optional)
 
 Stats are useful for debugging or when the user asks about processing time. By default, do NOT include stats in the output.
 
 **When stats are needed:** User asks "how long did it take?", "how many frames?", or similar.
 
-**How to get stats:**
+**How to get stats from report.json:**
 
-**Primary path (report.json exists):**
-Read `<workdir>/report.json` for full metadata.
+```bash
+# Quick metadata
+rtk jq '{title, uploader, language, engine}' /tmp/watch-XXX/report.json
 
-**Fallback path (report.json missing):**
+# Frame count
+rtk jq '.frames | length' /tmp/watch-XXX/report.json
+
+# Transcript segments count
+rtk jq '.transcript | length' /tmp/watch-XXX/report.json
+
+# Key moments count
+rtk jq '.key_moments | length' /tmp/watch-XXX/report.json
+
+# Duration (if available)
+rtk jq '.duration_seconds' /tmp/watch-XXX/report.json
+```
+
+**Fallback when report.json missing:**
 ```bash
 # Get duration
 ffprobe -v quiet -show_entries format=duration \
@@ -380,11 +372,11 @@ Auto-detects and uses:
 
 No manual flags needed — just ensure deps are installed.
 
-## LLM Features (Agent-Driven)
+## LLM Features (Automatic)
 
-- `--auto-moments` — generates moment detection prompt for agent
-- `--max-moments N` / `--min-moments N` — control moment count
-- `--stats` / `--stats-format telegram|compact` — analysis statistics
+- **Moment selection** — Binary automatically calls Groq/OpenAI to select key moments from transcript
+- **Language detection** — Auto-detects video language from title/description via LLM
+- `--no-whisper` — Disable Whisper fallback entirely
 
 ## Output Reminder
 
@@ -435,6 +427,30 @@ for each moment in key_moments.json:
 ```
 This produces equivalent output to watch2's transcript-moments mode. Always verify frame count ≥21 after extraction.
 
+### Subtitle Download Strategy (v4.5.0+)
+
+**How it works:** watch2 now downloads ALL available subtitle languages (`--sub-langs ".*"`) instead of guessing the language first. This eliminates YouTube 429 rate-limit issues that previously blocked English auto-captions for non-English videos.
+
+**Why "download all":**
+- YouTube rate-limits English auto-captions for non-English videos (HTTP 429)
+- On first run, no `info.json` exists → language defaults to "en" → 429
+- Downloading all languages (~20MB total) ensures at least one succeeds
+- `find_subtitle()` automatically picks the best matching language after download
+
+**Tradeoff:** ~20MB additional download (157 languages × 128KB each). Acceptable for videos that are already 20MB+.
+
+**If subtitles still fail:**
+```bash
+# 1. Check what subtitle files exist
+ls -la /tmp/watch-XXX/download/*.json3 /tmp/watch-XXX/download/*.vtt
+
+# 2. If files exist, try transcript mode directly
+# Binary auto-selects — just run it
+watch2 "URL" --out-dir /tmp/watch-XXX --output both
+
+# 3. If transcript mode also fails, report as bug
+```
+
 ### Subtitle Detection (Fixed in v4.4.0+)
 
 **Previously**: watch2 could say "no captions" even when `.json3` files existed in the download directory. Root cause was `Path::extension()` returning `"json3"` (no dot) but code comparing with `".json3"` (with dot) — the comparison always failed.
@@ -442,17 +458,6 @@ This produces equivalent output to watch2's transcript-moments mode. Always veri
 **Current status**: Fixed. `find_video()` and `find_subtitle()` now use correct extension patterns without dot prefix.
 
 **Rust gotcha for future contributors:** `std::path::Path::extension()` returns the extension WITHOUT the dot (`"json3"`, not `".json3"`). Always compare against `"json3"`, never `".json3"`. This bug existed for months because the code "looked correct" — the dot prefix is a natural assumption from other languages (Python's `os.path.splitext` returns with dot).
-
-**If this still occurs** (shouldn't happen on v4.4.0+):
-```bash
-# 1. Check what subtitle files exist
-ls -la /tmp/watch-XXX/download/*.json3 /tmp/watch-XXX/download/*.vtt
-
-# 2. If files exist, try transcript mode directly
-watch2 "URL" --detail transcript --out-dir /tmp/watch-XXX
-
-# 3. If transcript mode also fails, report as bug
-```
 
 ### Video Not Cleaned Up After Processing
 
@@ -467,7 +472,7 @@ watch2 "URL" --detail transcript --out-dir /tmp/watch-XXX
 **Pattern:**
 ```bash
 # Run watch2
-watch2 "https://youtu.be/abc" --detail efficient
+watch2 "https://youtu.be/abc" --out-dir /tmp/watch-XXX --output both
 
 # Analyze 21+ frames (MINIMUM — see Frame Count Verification Gate)
 vision_analyze(frame_0001.jpg)  # First frame
@@ -499,19 +504,13 @@ vision_analyze(frame_0021.jpg)  # End
 
 ### Don't Skip transcript-moments for Captioned Videos
 
-**MISTAKE**: Running `--detail efficient` or `--detail balanced` on a video that has captions, then only analyzing 3-5 frames with `vision_analyze`. This misses the entire transcript-moments pipeline and produces shallow analysis.
+**MISTAKE**: Running watch2 on a video that has captions but only analyzing 3-5 frames with `vision_analyze`. The binary auto-selects transcript-moments when captions are available — don't fight the auto-selection.
 
-**CORRECT**: Follow the [Workflow](#workflow) section — Transcript-First Mode. If the video has captions (check for `.json3` or `.vtt` files in the download directory), ALWAYS use `--detail transcript-moments` for deep analysis.
+**CORRECT**: Follow the [Workflow](#workflow) section — Single-Run Pipeline. The binary auto-detects captions and uses transcript-moments mode automatically.
 
 **Why this matters**: Auto-captions (especially non-English) contain errors — misspelled proper nouns, garbled names, incorrect claims. The transcript-moments pipeline catches these by combining transcript intelligence with visual verification.
 
-**When transcript-moments falls through**: If watch2 reports "No subtitles found" despite `.json3` files existing (Bug #5 or similar), do NOT fall back to scene detection. Instead:
-1. Parse the `.json3` transcript manually (use the JSON3 parser from the Manual Fallback Pipeline)
-2. Analyze the transcript to identify 50+ key moments with timestamps
-3. Extract frames at those specific timestamps using `--timestamps` flag or manual ffmpeg
-4. Vision-analyze those targeted frames
-
-This is the Manual Fallback Pipeline — it produces equivalent output to transcript-moments at the cost of more manual steps. Never shortcut to "scene detection → sample 21 evenly" when captions exist.
+**When no subtitles are found**: watch2 will report the issue and suggest setting `GROQ_API_KEY` or `OPENAI_API_KEY` for Whisper fallback. Do NOT fall back to scene detection when captions exist but weren't detected.
 
 ### Finding Top Moments in Transcript
 
@@ -531,7 +530,7 @@ Cross-reference with frame timestamps to confirm visual context, then compile to
 
 When av-scenechange library API fails (VariableFormat, VariableFramerate, unsupported codec), the binary gracefully falls back to ffmpeg scene detection with adaptive thresholds. Warning is printed but no crash.
 
-**Fallback behavior:** No scoring data available in fallback mode (ffmpeg scene detection doesn't provide scores). Frame selection falls back to `even_sample()` instead of `score_based_select()`.
+**Fallback behavior:** No scoring data available in fallback mode (ffmpeg scene detection doesn't provide scores). Frame selection falls back to uniform sampling.
 
 ### CJK/Unicode Character Safety
 
@@ -569,7 +568,7 @@ String truncation uses `chars().take(N)` instead of byte slicing (`[..N]`). Mult
 
 ### Don't Generate Redundant JSON Files (Agent Anti-Pattern)
 
-**MISTAKE**: Agent uses `execute_code` (Python) to write intermediate JSON files during Phase 3+4:
+**MISTAKE**: Agent uses `execute_code` (Python) to write intermediate JSON files during analysis:
 - `vision_results.json` — redundant, findings should be in agent response
 - `corrections.json` — redundant, corrections should be applied inline
 - `synthesis_prompt.txt` — redundant, synthesis should be generated directly
@@ -581,13 +580,7 @@ String truncation uses `chars().take(N)` instead of byte slicing (`[..N]`). Mult
 
 **CORRECT workflow**:
 ```
-Phase 3: vision_analyze → collect findings in memory → classify
-Phase 4: cross-reference gate → generate corrections + summary inline
-```
-
-**Data flow**:
-```
-report.json (Rust binary) → agent reads → vision_analyze → cross-reference → summary
+watch2 (single run) → report.json → agent reads → vision_analyze → cross-reference → summary
 ```
 
 **NOT**:
@@ -621,11 +614,16 @@ When analyzing frames — do this internally, don't output the process:
 
 ## Script Reference
 
-| Script | Purpose | When to Use |
-|--------|---------|-------------|
-| `moments.rs` | Generate LLM prompt for moment detection | Phase 1 |
-| `moment_frames.rs` | Match moments to extracted frames | Phase 2 |
-| `vision.rs` | Vision analysis (single + batch, merged) | Phase 3 |
-| `corrections.rs` | Apply corrections to transcript | Phase 4 |
-| `synthesis.rs` | Generate grounded synthesis prompt | Phase 4 |
-| `cache.rs` | Download caching (SHA256 keys, LRU eviction) | All runs |
+| Script | Purpose |
+|--------|---------|
+| `pipeline.rs` | Single-run pipeline orchestrator |
+| `moments.rs` | Generate LLM prompt for moment detection |
+| `moment_frames.rs` | Match moments to extracted frames |
+| `llm.rs` | LLM calls (Groq/OpenAI) for moment selection + language detection |
+| `transcript.rs` | Parse subtitle files (JSON3, VTT) |
+| `whisper.rs` | Whisper API fallback for transcription |
+| `frames.rs` | Frame extraction engine |
+| `scene_detect.rs` | Scene detection via av-scenechange library |
+| `output.rs` | Build report (markdown, JSON) |
+| `download.rs` | Video download + caching (SHA256 keys, LRU eviction) |
+| `config.rs` | Configuration from env + `.env` file |
