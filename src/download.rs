@@ -170,11 +170,9 @@ pub fn resolve_local(path: &str) -> Result<DownloadResult> {
 /// "en.auto", "en-orig"). We use glob patterns so both manual and auto subs
 /// are matched.
 fn subtitle_lang_pattern(lang: &str) -> String {
-    if lang == "en" {
-        "en.*".to_string()
-    } else {
-        format!("{}.*", lang)
-    }
+    // Strip regional suffix: "en-US" → "en", "pt-BR" → "pt"
+    let base = lang.split('-').next().unwrap_or(lang);
+    format!("{}.*", base)
 }
 
 /// Run `yt-dlp --list-subs` and parse available manual/auto subtitle languages.
@@ -475,17 +473,20 @@ fn find_video(dir: &Path) -> Option<PathBuf> {
 
 /// Find the best subtitle file in `dir`, preferring files matching `preferred_lang`.
 ///
-/// Without a language filter this used to return whichever `.json3`/`.vtt` file
+/// Matches against the base language code (e.g. "en" matches "en-US").
 fn find_subtitle(dir: &Path, preferred_lang: &str) -> Option<PathBuf> {
+    // Normalize: "en-US" → "en" for filename matching
+    let base_lang = preferred_lang.split('-').next().unwrap_or(preferred_lang);
     let mut candidates: Vec<(bool, PathBuf)> = Vec::new();
     for ext in &["json3", "vtt"] {
         for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
             let path = entry.path();
             if path.extension().map_or(false, |e| e == *ext) {
                 let name = path.file_name().unwrap().to_string_lossy();
-                // Match patterns like "video.id-orig.json3" or "video.id.json3"
-                let is_preferred = name.contains(&format!(".{}.", preferred_lang))
-                    || name.contains(&format!(".{}-", preferred_lang));
+                // Match patterns like "video.en-orig.json3" or "video.en.json3"
+                // Use base language code for matching (not regional like "en-US")
+                let is_preferred = name.contains(&format!(".{}.", base_lang))
+                    || name.contains(&format!(".{}-", base_lang));
                 candidates.push((is_preferred, path));
             }
         }

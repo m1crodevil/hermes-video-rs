@@ -325,6 +325,35 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         }
     }
 
+    // ── Step 6.5: Write scene_scores.json ────────────────────────────────
+    let scene_scores_path = if !scene_boundaries.is_empty() && !cli.no_scene_scores {
+        let fps_val = cli.fps.unwrap_or(30.0) as f64;
+        let frame_timestamps: Vec<(String, f64)> = frame_vec
+            .iter()
+            .map(|f| (f.path.clone(), f.timestamp))
+            .collect();
+        let path = work.join("scene_scores.json");
+        match crate::scene_detect::write_scene_scores(
+            &scene_boundaries,
+            &frame_timestamps,
+            duration,
+            fps_val,
+            0, // detection_time_ms not tracked in pipeline scope
+            &path,
+        ) {
+            Ok(()) => {
+                eprintln!("[watch2] scene_scores.json written ({} scenes)", scene_boundaries.len());
+                Some(path.to_string_lossy().to_string())
+            }
+            Err(e) => {
+                eprintln!("[watch2] warning: failed to write scene_scores.json: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // ── Step 7: Cleanup ─────────────────────────────────────────────────
     cleanup(&cli, &work, &video_path, &dl_result);
 
@@ -346,6 +375,7 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         fused_moments,
         scene_count,
         scene_boundaries,
+        scene_scores_path,
     );
 
     // ── Step 9: Show stats ──────────────────────────────────────────────
@@ -574,11 +604,14 @@ fn extract_frames_inner(
 fn ensure_resources(
     source: &str,
     download_dir: &std::path::Path,
-    cache: &mut Option<crate::cache::VideoCache>,  // mutable for cache store
+    cache: &mut Option<crate::cache::VideoCache>,
     use_cookies: bool,
     no_cache: bool,
     llm_lang: Option<&str>,
 ) -> anyhow::Result<(crate::download::DownloadResult, Vec<crate::scene_detect::SceneBoundary>)> {
+    // Ensure download directory exists (needed for both cache hit and miss paths)
+    std::fs::create_dir_all(download_dir)?;
+
     // 1. Check cache for existing video
     if !no_cache {
         if let Some(c) = cache {
@@ -863,6 +896,7 @@ fn run_transcript_moments_phase1(
         fused_moments: None,
         scene_boundaries: None,
         scene_count: None,
+        scene_scores_path: None,
     })
 }
 
@@ -1138,6 +1172,7 @@ fn build_report(
     fused_moments: Vec<crate::fusion::FusedMoment>,
     scene_count: Option<usize>,
     scene_boundaries: Vec<crate::scene_detect::SceneBoundary>,
+    scene_scores_path: Option<String>,
 ) -> WatchReport {
     let mut warnings = Vec::new();
 
@@ -1204,5 +1239,6 @@ fn build_report(
         fused_moments: if fused_moments.is_empty() { None } else { Some(fused_moments) },
         scene_boundaries: if scene_boundaries.is_empty() { None } else { Some(scene_boundaries) },
         scene_count,
+        scene_scores_path,
     }
 }

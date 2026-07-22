@@ -92,9 +92,12 @@ impl VideoCache {
         }
         let dir = self.cache_dir(&key);
 
-        // Try original subs first, then auto-generated
-        for suffix in &[format!("{lang}-orig"), lang.to_string()] {
-            let path = dir.join(format!("video.{}.json3", suffix));
+        // Normalize: "en-US" → "en" for filename matching
+        let base_lang = lang.split('-').next().unwrap_or(lang);
+ 
+         // Try original subs first, then auto-generated
+         for suffix in &[format!("{base_lang}-orig"), base_lang.to_string()] {
+             let path = dir.join(format!("video.{}.json3", suffix));
             if path.exists() {
                 return Some(path);
             }
