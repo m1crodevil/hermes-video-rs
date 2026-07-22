@@ -42,9 +42,9 @@ Zero config to start. `yt-dlp`, `ffmpeg`, and `av-scenechange` are the only runt
 
 **Cut the hype out of an update video.** `watch2 https://youtu.be/ what's actually new --skip-the-hype`
 
-**Catch what captions get wrong.** The moment-detection pipeline identifies key moments, extracts frames at those timestamps, and cross-references the transcript against what's actually on screen.
+**Catch what captions get wrong.** The pipeline sends the transcript to an LLM which selects key moments automatically, then extracts frames at those timestamps and cross-references the transcript against what's actually on screen.
 
-**Verify transcript accuracy with visual evidence.** Automatically identifies moments in the transcript that need visual verification (proper nouns, game names, claims, deictic references), extracts frames at those timestamps, and validates the transcript against what's actually shown.
+**Verify transcript accuracy with visual evidence.** Automatically identifies moments in the transcript that need visual verification (proper nouns, game names, claims, deictic references) via LLM selection, extracts frames at those timestamps, and validates the transcript against what's actually shown.
 
 ---
 
@@ -65,32 +65,26 @@ Video URL / local path
     ↓
 5. Scene detection via av-scenechange
     ↓
-6. If key_moments.json exists → extract frames at timestamps
-   If not → generate moments_prompt.txt and exit
+6. LLM selects key moments (Groq/OpenAI inline) + extracts frames at those timestamps
     ↓
 7. Cleanup video file (save disk space)
     ↓
 8. Build WatchReport (markdown/JSON)
 ```
 
-### Two-Run Flow
+### Single-Run Design
 
-watch2 operates in two phases across two runs:
+watch2 runs everything in one pass — no re-running, no intermediate files:
 
-**Phase 1 — First run (prompt generation):**
-- Downloads the video and subtitles
-- Parses the transcript
-- Runs scene detection
-- Generates `moments_prompt.txt` with transcript + context for an LLM agent
-- Exits
+1. Downloads the video and subtitles
+2. Parses the transcript
+3. Runs scene detection
+4. Sends the transcript to an LLM (Groq/OpenAI) which selects the key moments inline
+5. Extracts frames at those timestamps
+6. Builds a `WatchReport` with frames, transcript, scene boundaries, and key moment metadata
+7. Cleans up the video file
 
-**Phase 2 — Re-run (frame extraction):**
-- An LLM agent reads the prompt, identifies key moments, writes `key_moments.json`
-- watch2 re-runs: downloads the video, detects scenes, extracts frames at the exact timestamps
-- Builds a `WatchReport` with frames, transcript, scene boundaries, and key moment metadata
-- Cleans up the video file
-
-This two-phase design lets the LLM decide *which moments matter* before any frames are extracted, saving tokens and disk space.
+Everything happens in a single invocation. No `moments_prompt.txt`, no `key_moments.json`, no agent handoff — the LLM selects moments directly during the pipeline run.
 
 ---
 
@@ -142,7 +136,7 @@ The `WatchReport` includes:
 - Extracted frames with timestamps and reasons
 - Full transcript with word-level timing (when available from JSON3 captions)
 - Scene boundaries from av-scenechange
-- Key moment data (when `key_moments.json` is present)
+- Key moment metadata (LLM-selected moments with reasons)
 - Warnings for sparse coverage, missing transcript, etc.
 
 ---
@@ -173,8 +167,8 @@ Captions cover the majority of public videos for free. The Whisper fallback only
 | Capability | Requirement | Cost |
 |------------|-------------|------|
 | Download + native captions | `yt-dlp` + `ffmpeg` | Free |
-| Whisper fallback (preferred) | [Groq API key](https://console.groq.com/keys) | ~$0.004/min |
-| Whisper fallback (alt) | [OpenAI API key](https://platform.openai.com/api-keys) | Standard pricing |
+| LLM moment selection + Whisper fallback (preferred) | [Groq API key](https://console.groq.com/keys) | ~$0.004/min |
+| LLM moment selection + Whisper fallback (alt) | [OpenAI API key](https://platform.openai.com/api-keys) | Standard pricing |
 | Disable Whisper | `--no-whisper` | Free, frames-only |
 
 ---
@@ -259,13 +253,18 @@ RUST_LOG=debug cargo run -- --help
 
 ## Key Moments Pipeline
 
-The moment-detection pipeline works across two runs:
+The moment-detection pipeline runs inline during a single invocation:
 
 ```
-Run 1 (Rust): video + transcript → moments_prompt.txt
-    ↓ LLM agent reads prompt, identifies key moments
-Run 2 (Rust): key_moments.json → video download + scene detection + frame extraction → WatchReport
-    ↓ LLM agent reads report, analyzes frames via vision
+Video URL / local path
+    ↓
+Download + transcript + scene detection
+    ↓
+LLM (Groq/OpenAI) selects key moments from transcript + scene data
+    ↓
+Frame extraction at selected timestamps → WatchReport
+    ↓
+Agent reads report, analyzes frames via vision (optional)
 ```
 
 **Data flow**: `report.json` is the single source of truth. The Rust binary outputs structured data; the agent reads it directly.
