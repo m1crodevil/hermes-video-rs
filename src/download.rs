@@ -352,11 +352,10 @@ pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
     if !is_valid_lang(&detected_lang) {
         eprintln!("[watch2] detected lang '{}' not in whitelist, falling back to en", detected_lang);
     }
-    let lang_pattern = subtitle_lang_pattern(&detected_lang);
     let lang_name = get_language_name(&detected_lang);
     eprintln!(
-        "[watch2] subtitle language: {} ({}) — pattern: {}",
-        lang_name, detected_lang, lang_pattern
+        "[watch2] subtitle language: {} ({}) — downloading ALL languages",
+        lang_name, detected_lang
     );
 
     // --- Single pass: full download with subtitles (NO separate metadata fetch) ---
@@ -375,7 +374,7 @@ pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
         "--write-info-json",  // Re-generate info.json with full download
         "--write-subs",
         "--write-auto-subs",
-        "--sub-langs", &lang_pattern,
+        "--sub-langs", ".*",
         "--sub-format", "json3/best",
         "-o", &output_template,
         "--", &url,
@@ -656,6 +655,41 @@ mod tests {
         // This should work — previously failed because code compared ".json3" with "json3"
         let result = find_subtitle(&dir, "id");
         assert!(result.is_some(), "Bug #5 regression: find_subtitle returned None for .json3 file");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_subtitle_download_all_scenario() {
+        // Simulates --sub-langs ".*" scenario: many language files exist
+        // find_subtitle should pick the correct one based on preferred_lang
+        let dir = temp_dir("find_sub_download_all");
+        fs::write(dir.join("video.en.json3"), b"english").unwrap();
+        fs::write(dir.join("video.id.json3"), b"indonesian").unwrap();
+        fs::write(dir.join("video.ja.json3"), b"japanese").unwrap();
+        fs::write(dir.join("video.ko.json3"), b"korean").unwrap();
+        fs::write(dir.join("video.zh-Hans.json3"), b"chinese-simplified").unwrap();
+        fs::write(dir.join("video.pt.json3"), b"portuguese").unwrap();
+        fs::write(dir.join("video.es.json3"), b"spanish").unwrap();
+        fs::write(dir.join("video.de.json3"), b"german").unwrap();
+        fs::write(dir.join("video.fr.json3"), b"french").unwrap();
+        fs::write(dir.join("video.ar.json3"), b"arabic").unwrap();
+
+        // Requesting Indonesian — should find it among 10 languages
+        let result = find_subtitle(&dir, "id");
+        assert!(result.is_some());
+        let name = result.unwrap().file_name().unwrap().to_string_lossy().to_string();
+        assert!(name.contains("id"), "Expected Indonesian subtitle, got: {}", name);
+
+        // Requesting English — should find it
+        let result = find_subtitle(&dir, "en");
+        assert!(result.is_some());
+        let name = result.unwrap().file_name().unwrap().to_string_lossy().to_string();
+        assert!(name.contains("en"), "Expected English subtitle, got: {}", name);
+
+        // Requesting non-existent language — should fallback to any
+        let result = find_subtitle(&dir, "ru");
+        assert!(result.is_some(), "Should fallback to any available subtitle");
+
         let _ = fs::remove_dir_all(&dir);
     }
 

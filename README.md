@@ -55,9 +55,9 @@ watch2 runs a **single linear pipeline** — no mode branching, no configuration
 ```
 Video URL / local path
     ↓
-1. Download video (720p) + subtitles (JSON3) via yt-dlp
+1. Download video (720p) + ALL subtitles (JSON3) via yt-dlp
     ↓
-2. Parse transcript from subtitle file
+2. Parse transcript from best-matching subtitle file
     ↓
 3. LLM language detection (for URLs — helps pick best subtitles)
     ↓
@@ -76,8 +76,8 @@ Video URL / local path
 
 watch2 runs everything in one pass — no re-running, no intermediate files:
 
-1. Downloads the video and subtitles
-2. Parses the transcript
+1. Downloads the video and ALL subtitles (avoids YouTube 429 rate-limits)
+2. Parses the transcript from the best-matching language
 3. Runs scene detection
 4. Sends the transcript to an LLM (Groq/OpenAI) which selects the key moments inline
 5. Extracts frames at those timestamps
