@@ -20,15 +20,15 @@ pub struct PipelineContext {
     pub cache: Option<VideoCache>,
 }
 
-/// Linear pipeline — no mode branching.
+/// Single-run pipeline — download, analyse, extract frames, report.
 pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
     let PipelineContext {
-        cli, config, max_frames: _, work, download_dir, frames_dir, start_time: _, mut cache,
+        cli, config, max_frames, work, download_dir, frames_dir, start_time: _, mut cache,
     } = ctx;
 
-    // ── 1. Materialize resources (download + scene detect) ────────────
+    // ── Step 1: Download video + subtitle + scene detect ──────────────
     let is_url = download::is_url(&cli.source);
-    let (dl_result, mut scene_boundaries) = if is_url {
+    let (dl_result, scene_boundaries) = if is_url {
         ensure_resources(&cli.source, &download_dir, &mut cache, cli.cookies, cli.no_cache)?
     } else {
         (download::resolve_local(&cli.source)?, vec![])
@@ -46,7 +46,7 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         duration = dl_result.info.duration.unwrap_or(0.0);
     }
 
-    // ── 2. Parse transcript ───────────────────────────────────────────
+    // ── Step 2: Parse transcript ──────────────────────────────────────
     let mut transcript_segments: Vec<crate::output::TranscriptSegment> = Vec::new();
     let mut transcript_source = String::from("none");
     if let Some(ref sub_path) = dl_result.subtitle_path {
@@ -56,10 +56,14 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         }
     }
 
-    // ── 3. LLM language detection (if URL) ────────────────────────────
-    let _llm_lang = if is_url { detect_language(&cli.source, &dl_result, &config, &mut cache).await } else { None };
+    // ── Step 3: Detect language (cache → metadata → LLM) ─────────────
+    let _llm_lang = if is_url {
+        detect_language(&cli.source, &dl_result, &config, &mut cache).await
+    } else {
+        None
+    };
 
-    // ── 4. Whisper fallback ───────────────────────────────────────────
+    // ── Step 4: Whisper fallback (if no subtitles) ────────────────────
     if transcript_segments.is_empty() && !cli.no_whisper {
         run_whisper_fallback(&config, &work, &video_path, &mut transcript_segments, &mut transcript_source).await;
     }
@@ -68,71 +72,86 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         else if !config.has_whisper_key() { eprintln!("⚠️  No subtitles found. Set GROQ_API_KEY or OPENAI_API_KEY."); }
     }
 
-    // ── 5. Check key_moments.json → extract frames or generate prompt ──
-    let moments_path = work.join("key_moments.json");
-    let mut key_moments_raw: Vec<serde_json::Value> = Vec::new();
-    let mut key_moment_stats: Option<crate::output::KeyMomentStats> = None;
+    // ── Step 5: LLM moment selection ──────────────────────────────────
+    let mut key_moments: Vec<crate::moments::KeyMoment> = Vec::new();
+    if !transcript_segments.is_empty() {
+        let text = crate::moments::format_transcript_for_analysis(&transcript_segments);
+        let scene_text = format_scene_text(&scene_boundaries);
+        match crate::llm::select_moments(
+            &text,
+            &dl_result.info.title,
+            dl_result.info.uploader.as_deref().unwrap_or("Unknown"),
+            duration,
+            &scene_text,
+            &config,
+        ).await {
+            Some(moments) => {
+                eprintln!("[watch2] {} key moments from LLM", moments.len());
+                // Save key_moments.json for reference / debugging
+                if let Ok(json) = serde_json::to_string_pretty(&moments) {
+                    let _ = std::fs::write(work.join("key_moments.json"), &json);
+                }
+                key_moments = moments;
+            }
+            None => eprintln!("[watch2] LLM moment selection failed or returned empty"),
+        }
+    } else {
+        eprintln!("[watch2] no transcript — skipping moment selection");
+    }
+
+    // ── Step 6: Extract frames ────────────────────────────────────────
     let mut frame_vec: Vec<FrameInfo> = Vec::new();
     let mut frame_meta = empty_frame_meta();
 
-    if moments_path.exists() {
-        // ── RE-RUN: extract frames at moment timestamps ───────────────
-        let mut moments: Vec<crate::moments::KeyMoment> =
-            serde_json::from_str(&std::fs::read_to_string(&moments_path)?)?;
-        eprintln!("[watch2] {} key moments loaded", moments.len());
-
-        let timestamps = crate::moment_frames::get_timestamps_from_moments(&moments, None);
+    if !key_moments.is_empty() {
+        // Extract at moment timestamps
+        let timestamps = crate::moment_frames::get_timestamps_from_moments(&key_moments, None);
         eprintln!("[watch2] {} timestamps for extraction", timestamps.len());
 
         if let Some(ref vp) = video_path {
-            scene_boundaries = detect_scenes(vp, duration);
             let (extracted, meta) = frames::extract_at_timestamps(
                 vp, &frames_dir, &timestamps, cli.resolution, None, None, None,
             )?;
-            crate::moment_frames::update_moments_with_frames(&mut moments, &extracted);
+            crate::moment_frames::update_moments_with_frames(&mut key_moments, &extracted);
             frame_vec = extracted;
             frame_meta = meta;
-            key_moments_raw = moments.iter()
-                .map(|m| serde_json::to_value(m).unwrap_or_default())
-                .collect();
-            key_moment_stats = Some(build_moment_stats(&key_moments_raw));
         } else {
             eprintln!("[watch2] ⚠️  No video available for frame extraction");
         }
-    } else {
-        // ── FIRST RUN: generate moments prompt, exit ──────────────────
-        eprintln!("[watch2] no key_moments.json — generating prompt (Phase 1)");
-        if !transcript_segments.is_empty() {
-            let text = crate::moments::format_transcript_for_analysis(&transcript_segments);
-            let prompt = crate::moments::generate_prompt(
-                &text, &dl_result.info.title,
-                dl_result.info.uploader.as_deref().unwrap_or("Unknown"),
-                dl_result.info.duration.unwrap_or(0.0), 50, None,
-            );
-            let path = work.join("moments_prompt.txt");
-            std::fs::write(&path, &prompt)?;
-            eprintln!("[watch2] moments prompt → {}", path.display());
+    } else if video_path.is_some() {
+        // Fallback: extract uniform frames across the video
+        let timestamps = generate_uniform_timestamps(duration, max_frames);
+        if !timestamps.is_empty() {
+            eprintln!("[watch2] {} uniform timestamps (fallback)", timestamps.len());
+            if let Some(ref vp) = video_path {
+                let (extracted, meta) = frames::extract_at_timestamps(
+                    vp, &frames_dir, &timestamps, cli.resolution, None, None, None,
+                )?;
+                frame_vec = extracted;
+                frame_meta = meta;
+            }
         }
-
-        if !scene_boundaries.is_empty() {
-            let _ = crate::scene_detect::write_scene_scores(
-                &scene_boundaries, &[], duration, 30.0, 0, &work.join("scene_scores.json"),
-            );
-        }
-        cleanup_audio(&work);
-        return Ok(build_report(&cli, &work, &dl_result, vec![], 0, &frame_meta,
-            transcript_segments, &transcript_source, duration, false,
-            key_moments_raw, key_moment_stats, Some(scene_boundaries.len()), scene_boundaries, None));
     }
 
-    // ── 6. Cleanup ────────────────────────────────────────────────────
+    // ── Step 7: Cleanup video ─────────────────────────────────────────
     cleanup(&cli, &work, &video_path);
 
-    // ── 7. Build report ───────────────────────────────────────────────
+    // ── Step 8: Build report ──────────────────────────────────────────
+    let key_moments_raw: Vec<serde_json::Value> = key_moments.iter()
+        .map(|m| serde_json::to_value(m).unwrap_or_default())
+        .collect();
+    let key_moment_stats = if key_moments_raw.is_empty() {
+        None
+    } else {
+        Some(build_moment_stats(&key_moments_raw))
+    };
     let scene_count = if scene_boundaries.is_empty() { None } else { Some(scene_boundaries.len()) };
-    Ok(build_report(&cli, &work, &dl_result, frame_vec, frame_meta.deduped_count,
+
+    Ok(build_report(
+        &cli, &work, &dl_result, frame_vec, frame_meta.deduped_count,
         &frame_meta, transcript_segments, &transcript_source, duration, false,
-        key_moments_raw, key_moment_stats, scene_count, scene_boundaries, None))
+        key_moments_raw, key_moment_stats, scene_count, scene_boundaries, None,
+    ))
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -142,6 +161,32 @@ fn empty_frame_meta() -> frames::FrameMeta {
         engine: "none".into(), candidate_count: 0, selected_count: 0,
         deduped_count: 0, fallback: false, dropped_out_of_window: 0,
     }
+}
+
+/// Format scene boundaries as human-readable text for the LLM prompt.
+fn format_scene_text(boundaries: &[crate::scene_detect::SceneBoundary]) -> String {
+    if boundaries.is_empty() {
+        return "No scene changes detected.".to_string();
+    }
+    boundaries.iter().enumerate().map(|(i, b)| {
+        format!(
+            "Scene {}: {} - {} ({:.1}s)",
+            i + 1,
+            crate::moments::format_timestamp(b.start_sec),
+            crate::moments::format_timestamp(b.end_sec),
+            b.duration_sec,
+        )
+    }).collect::<Vec<_>>().join("\n")
+}
+
+/// Generate evenly-spaced timestamps across the video for uniform frame extraction.
+fn generate_uniform_timestamps(duration: f64, count: u32) -> Vec<f64> {
+    if duration <= 0.0 || count == 0 {
+        return Vec::new();
+    }
+    let n = count.min(20).max(1);
+    let step = duration / (n as f64 + 1.0);
+    (1..=n).map(|i| step * i as f64).collect()
 }
 
 fn detect_scenes(vp: &std::path::Path, duration: f64) -> Vec<crate::scene_detect::SceneBoundary> {
@@ -290,10 +335,7 @@ fn cleanup(cli: &cli::Cli, work: &PathBuf, video_path: &Option<PathBuf>) {
             }
         }
     }
-    cleanup_audio(work);
-}
-
-fn cleanup_audio(work: &PathBuf) {
+    // Clean up audio artifact
     let p = work.join("audio.mp3");
     if p.exists() { std::fs::remove_file(&p).ok(); }
 }

@@ -1,14 +1,11 @@
-/// LLM-based language detection for video content.
+/// LLM utilities for video analysis: language detection and moment selection.
 ///
-/// Uses the video title + description to ask an LLM what language the content is in.
-/// Returns an ISO 639-1 language code (e.g. "id", "en", "ja").
-///
-/// Fallback chain:
-///   1. LLM detection (Groq → OpenAI)
-///   2. `info.language` from yt-dlp metadata
-///   3. "en" (English)
+/// Fallback chain for all LLM calls:
+///   1. Groq (llama-3.1-8b-instant) — fast, free tier
+///   2. OpenAI (gpt-4o-mini) — paid fallback
 
 use crate::config::WatchConfig;
+use crate::moments::KeyMoment;
 
 /// Detect content language from video title + description using an LLM.
 ///
@@ -30,31 +27,126 @@ pub async fn detect_language_llm(
         if desc.chars().count() > 500 { desc.chars().take(500).collect::<String>() } else { desc.to_string() }
     );
 
+    let system = "You are a language detector. Return ONLY a 2-letter ISO 639-1 language code. No explanation.";
+
     // Try Groq first (fast, free tier)
     if let Some(ref key) = config.groq_api_key {
-        if let Some(lang) = call_llm(
+        if let Some(raw) = call_llm(
             key,
             "https://api.groq.com/openai/v1/chat/completions",
             "llama-3.1-8b-instant",
             &prompt,
+            system,
+            10,
+            0.0,
         )
         .await
         {
-            return Some(lang);
+            let lang = extract_lang_code(&raw.to_lowercase());
+            if is_valid_lang_code(&lang) {
+                return Some(lang);
+            }
         }
     }
 
     // Fallback to OpenAI
     if let Some(ref key) = config.openai_api_key {
-        if let Some(lang) = call_llm(
+        if let Some(raw) = call_llm(
             key,
             "https://api.openai.com/v1/chat/completions",
             "gpt-4o-mini",
             &prompt,
+            system,
+            10,
+            0.0,
         )
         .await
         {
-            return Some(lang);
+            let lang = extract_lang_code(&raw.to_lowercase());
+            if is_valid_lang_code(&lang) {
+                return Some(lang);
+            }
+        }
+    }
+
+    None
+}
+
+/// Select key moments from a video transcript using an LLM.
+///
+/// Builds the moment detection prompt from transcript + metadata, calls
+/// Groq (llama-3.1-8b-instant) first, falls back to OpenAI (gpt-4o-mini).
+///
+/// Returns parsed `KeyMoment` entries sorted by priority, or `None` if
+/// all backends fail or the response can't be parsed.
+pub async fn select_moments(
+    transcript_text: &str,
+    title: &str,
+    uploader: &str,
+    duration: f64,
+    scene_text: &str,
+    config: &WatchConfig,
+) -> Option<Vec<KeyMoment>> {
+    // Enrich transcript text with scene boundary context when available
+    let full_text = if scene_text.is_empty() || scene_text == "No scene changes detected." {
+        transcript_text.to_string()
+    } else {
+        format!("{}\n\nScene boundaries:\n{}", transcript_text, scene_text)
+    };
+
+    let prompt = crate::moments::generate_prompt(
+        &full_text,
+        title,
+        uploader,
+        duration,
+        50,  // max_moments
+        None, // min_moments (auto-calculate from duration)
+    );
+
+    let system = "You are a video analyst identifying key moments that need visual verification. \
+                   Return ONLY a valid JSON array. No markdown fences, no explanation.";
+
+    // Try Groq first
+    if let Some(ref key) = config.groq_api_key {
+        if let Some(response) = call_llm(
+            key,
+            "https://api.groq.com/openai/v1/chat/completions",
+            "llama-3.1-8b-instant",
+            &prompt,
+            system,
+            4096,
+            0.0,
+        )
+        .await
+        {
+            let segments = Vec::new();
+            let moments = crate::moments::parse_moments_response(&response, &segments);
+            if !moments.is_empty() {
+                eprintln!("[watch2] Groq returned {} moments", moments.len());
+                return Some(moments);
+            }
+        }
+    }
+
+    // Fallback to OpenAI
+    if let Some(ref key) = config.openai_api_key {
+        if let Some(response) = call_llm(
+            key,
+            "https://api.openai.com/v1/chat/completions",
+            "gpt-4o-mini",
+            &prompt,
+            system,
+            4096,
+            0.0,
+        )
+        .await
+        {
+            let segments = Vec::new();
+            let moments = crate::moments::parse_moments_response(&response, &segments);
+            if !moments.is_empty() {
+                eprintln!("[watch2] OpenAI returned {} moments", moments.len());
+                return Some(moments);
+            }
         }
     }
 
@@ -62,20 +154,31 @@ pub async fn detect_language_llm(
 }
 
 /// Call an OpenAI-compatible chat completions endpoint.
-async fn call_llm(api_key: &str, url: &str, model: &str, prompt: &str) -> Option<String> {
+///
+/// Returns the raw model response text on success, or `None` on any failure.
+/// The caller is responsible for interpreting the content (language code, JSON, etc.).
+pub async fn call_llm(
+    api_key: &str,
+    url: &str,
+    model: &str,
+    prompt: &str,
+    system_prompt: &str,
+    max_tokens: u32,
+    temperature: f64,
+) -> Option<String> {
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(60))
         .build()
         .ok()?;
 
     let body = serde_json::json!({
         "model": model,
         "messages": [
-            {"role": "system", "content": "You are a language detector. Return ONLY a 2-letter ISO 639-1 language code. No explanation."},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}
         ],
-        "max_tokens": 10,
-        "temperature": 0.0,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
     });
 
     let resp = client
@@ -87,6 +190,7 @@ async fn call_llm(api_key: &str, url: &str, model: &str, prompt: &str) -> Option
         .ok()?;
 
     if !resp.status().is_success() {
+        eprintln!("[watch2] LLM {} returned {}", model, resp.status());
         return None;
     }
 
@@ -94,16 +198,12 @@ async fn call_llm(api_key: &str, url: &str, model: &str, prompt: &str) -> Option
     let content = json["choices"][0]["message"]["content"]
         .as_str()?
         .trim()
-        .to_lowercase();
+        .to_string();
 
-    // Extract just the language code (LLM might return extra text)
-    let lang = extract_lang_code(&content);
-    if is_valid_lang_code(&lang) {
-        Some(lang)
-    } else {
-        None
-    }
+    Some(content)
 }
+
+// ─── Language code helpers ────────────────────────────────────────────────
 
 /// Extract a 2-letter ISO 639-1 code from LLM output.
 ///
@@ -177,5 +277,4 @@ mod tests {
         assert!(!is_valid_lang_code("i"));
         assert!(!is_valid_lang_code("12"));
     }
-
 }
