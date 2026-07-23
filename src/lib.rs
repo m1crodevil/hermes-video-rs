@@ -5,7 +5,7 @@ pub mod pipeline;
 pub mod download;
 pub mod error;
 pub mod frames;
-pub mod llm;
+
 pub mod output;
 pub mod scene_detect;
 pub mod setup;

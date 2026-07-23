@@ -1,6 +1,6 @@
 ---
 name: watch2
-version: "6.3.0"
+version: "7.0.0"
 description: "Watch a video (URL or local path). Rust-powered analysis — single linear pipeline, no mode selection needed."
 argument-hint: " <url-or-path> [question]"
 allowed-tools: Bash, Read, AskUserQuestion
@@ -136,32 +136,62 @@ Binary auto-selects analysis mode:
 
 ## Workflow
 
-### Single-Run Pipeline (all modes)
+### New Architecture (v7.0.0)
 
-watch2 performs the entire analysis in **one pass** — no re-running needed:
+The binary handles data extraction only. All intelligence (LLM calls, moment selection, analysis) is done by the agent.
 
-1. **Run watch2 once** — the binary handles everything automatically:
-   - Downloads video + subtitles
-   - Runs scene detection (av-scenechange)
-   - Parses transcript
-   - Calls LLM (Groq/OpenAI) to select key moments
-   - Extracts frames at selected timestamps
-   - Builds report.json
+```
+Binary (Rust) — NO LLM calls:
+  1. Download video + subtitles
+  2. Parse transcript (JSON3)
+  3. Scene detection (av-scenechange)
+  4. If no transcript + no GROQ_API_KEY → STOP with error
+  5. Extract uniform frames (baseline)
+  6. Output: report.json (transcript + scenes + metadata + frame paths)
+  7. Cleanup video
+
+Agent (Hermes) — ALL intelligence:
+  1. Read report.json
+  2. Language detection via LLM
+  3. Select key moments via LLM (using transcript + scene data)
+  4. Extract frames at moment timestamps (binary via --timestamps)
+  5. Vision analyze all frames (≥21 minimum)
+  6. Cross-reference: transcript × scenes × vision
+  7. Generate comprehensive final analysis
+```
+
+### Single-Run Pipeline (Binary Only)
+
+watch2 performs data extraction in **one pass**:
 
 ```bash
-# Single command — binary handles everything
+# Binary extracts data — agent handles intelligence
 watch2 "https://youtu.be/abc" --out-dir /tmp/watch-XXX --output both
 ```
 
-2. **Agent reads report.json** — contains all structured data (frames, key_moments, stats)
+1. **Run watch2** — binary handles everything:
+   - Downloads video + subtitles
+   - Runs scene detection (av-scenechange)
+   - Parses transcript
+   - Extracts uniform frames (baseline)
+   - Builds report.json
+   - Cleans up video
 
-3. **Agent calls vision_analyze** on 21+ extracted frames with specific questions from key_moments.json (if present)
+2. **Agent reads report.json** — contains transcript, scenes, metadata, frame paths
 
-4. **Cross-reference gate** (INTERNAL) — transcript × vision × scene
-   - Classify findings: confirmed ✅, corrected 🔧, fabrication ❓, unverified ⚠️, partial 🔸
-   - **Do NOT output the cross-reference table**
+3. **Agent selects key moments via LLM** — using transcript + scene data:
+   - Language detection
+   - Moment selection (what needs visual verification)
+   - Returns timestamps
 
-5. **Generate grounded summary** — comprehensive analysis in your response
+4. **Agent extracts frames at moment timestamps** (if more frames needed):
+   ```bash
+   watch2 "URL" --timestamps "00:30,01:15,02:45,... --out-dir /tmp/watch-XXX"
+   ```
+
+5. **Agent vision_analyze all frames** (≥21 minimum)
+
+6. **Agent generates comprehensive analysis** — combining transcript, scenes, vision results
 
 ### Background Mode (Long Videos >10 min)
 
@@ -339,28 +369,24 @@ Automatically detects video language and selects best subtitles:
 
 ## Configuration
 
-Same as Python version: `~/.config/watch/.env`
+Config file: `~/.config/watch/.env`
 ```
-GROQ_API_KEY=gsk_...        # Optional — for Whisper fallback
-OPENAI_API_KEY=sk-...        # Optional — alternative Whisper provider
-WATCH_DETAIL=balanced
+GROQ_API_KEY=gsk_...        # Required for Whisper fallback only
+OPENAI_API_KEY=sk-...        # Alternative Whisper provider
 SETUP_COMPLETE=true
 ```
 
-### API Key (Optional)
+### API Key (Optional — Whisper Only)
 
-watch2 can run **without** a Whisper API key when subtitles are available via yt-dlp.
+API keys are only needed for Whisper audio transcription (when subtitles are unavailable).
 
 - **With API key**: Whisper fallback available for videos without subtitles
 - **Without API key**: Only works with videos that have auto/manual captions
 - **`--no-whisper`**: Suppresses the "no API key" warning, skips Whisper entirely
 
-When no subtitles are found and no API key is set, watch2 prints a clear explanation:
+When no subtitles are found and no API key is set, watch2 stops with an error:
 ```
-⚠️  No subtitles found for this video.
-    Whisper API key required for transcription.
-    Set GROQ_API_KEY or OPENAI_API_KEY in ~/.config/watch/.env
-    Or use --no-whisper to skip (no transcript available)
+No transcript available. Set GROQ_API_KEY or OPENAI_API_KEY for Whisper transcription.
 ```
 
 ## YouTube 2026 Support
@@ -372,11 +398,15 @@ Auto-detects and uses:
 
 No manual flags needed — just ensure deps are installed.
 
-## LLM Features (Automatic)
+## LLM Features (Agent-Side)
 
-- **Moment selection** — Binary automatically calls Groq/OpenAI to select key moments from transcript
-- **Language detection** — Auto-detects video language from title/description via LLM
-- `--no-whisper` — Disable Whisper fallback entirely
+**No direct LLM calls from binary.** All intelligence is handled by the agent.
+
+- **Language detection** — Agent detects language via LLM from transcript
+- **Moment selection** — Agent selects key moments via LLM using transcript + scene data
+- **Analysis** — Agent generates comprehensive analysis combining all data
+
+**Whisper fallback** — Binary calls Groq/OpenAI API only for audio transcription when subtitles unavailable. Requires `GROQ_API_KEY` or `OPENAI_API_KEY` in `~/.config/watch/.env`.
 
 ## Output Reminder
 
@@ -507,13 +537,18 @@ vision_analyze(frame_0021.jpg)  # End
 
 **If this happens again**: STOP. Extract more frames. Do NOT deliver analysis with <21 frames.
 
-### Don't Skip transcript-moments for Captioned Videos
+### Don't Skip Agent-Side Moment Selection
 
-**MISTAKE**: Running watch2 on a video that has captions but only analyzing 3-5 frames with `vision_analyze`. The binary auto-selects transcript-moments when captions are available — don't fight the auto-selection.
+**MISTAKE**: Running watch2 and only analyzing the uniform baseline frames without doing LLM-based moment selection. This misses key moments that need visual verification.
 
-**CORRECT**: Follow the [Workflow](#workflow) section — Single-Run Pipeline. The binary auto-detects captions and uses transcript-moments mode automatically.
+**CORRECT**: After watch2 outputs report.json:
+1. Agent reads transcript + scene data
+2. Agent uses LLM to select key moments (proper nouns, claims, deictic references)
+3. Agent extracts frames at those timestamps
+4. Agent vision-analyzes all frames
+5. Agent cross-references transcript × scenes × vision
 
-**Why this matters**: Auto-captions (especially non-English) contain errors — misspelled proper nouns, garbled names, incorrect claims. The transcript-moments pipeline catches these by combining transcript intelligence with visual verification.
+**Why this matters**: Auto-captions (especially non-English) contain errors — misspelled proper nouns, garbled names, incorrect claims. The agent-side moment selection catches these by combining transcript intelligence with visual verification.
 
 **When no subtitles are found**: watch2 will report the issue and suggest setting `GROQ_API_KEY` or `OPENAI_API_KEY` for Whisper fallback. Do NOT fall back to scene detection when captions exist but weren't detected.
 
@@ -621,12 +656,11 @@ When analyzing frames — do this internally, don't output the process:
 
 | Script | Purpose |
 |--------|---------|
-| `pipeline.rs` | Single-run pipeline orchestrator |
-| `moments.rs` | Generate LLM prompt for moment detection |
+| `pipeline.rs` | Single-run pipeline orchestrator (no LLM calls) |
+| `moments.rs` | Moment detection prompt template + parsing (used by agent) |
 | `moment_frames.rs` | Match moments to extracted frames |
-| `llm.rs` | LLM calls (Groq/OpenAI) for moment selection + language detection |
 | `transcript.rs` | Parse subtitle files (JSON3, VTT) |
-| `whisper.rs` | Whisper API fallback for transcription |
+| `whisper.rs` | Groq/OpenAI Whisper API client (transcription only) |
 | `frames.rs` | Frame extraction engine |
 | `scene_detect.rs` | Scene detection via av-scenechange library |
 | `output.rs` | Build report (markdown, JSON) |

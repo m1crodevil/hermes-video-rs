@@ -6,7 +6,6 @@ use crate::frames;
 use crate::output::{FrameInfo, WatchReport};
 use crate::transcript;
 use crate::whisper;
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 pub struct PipelineContext {
@@ -56,73 +55,32 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         }
     }
 
-    // ── Step 3: Detect language (cache → metadata → LLM) ─────────────
-    let _llm_lang = if is_url {
-        detect_language(&cli.source, &dl_result, &config, &mut cache).await
-    } else {
-        None
-    };
-
-    // ── Step 4: Whisper fallback (if no subtitles) ────────────────────
+    // ── Step 3: Whisper fallback (if no subtitles) ────────────────────
     if transcript_segments.is_empty() && !cli.no_whisper {
         run_whisper_fallback(&config, &work, &video_path, &mut transcript_segments, &mut transcript_source).await;
     }
+
+    // ── Step 4: Transcript required check ─────────────────────────────
     if transcript_segments.is_empty() {
-        if cli.no_whisper { eprintln!("⚠️  No subtitles found (--no-whisper skipped whisper)"); }
-        else if !config.has_whisper_key() { eprintln!("⚠️  No subtitles found. Set GROQ_API_KEY or OPENAI_API_KEY."); }
-    }
-
-    // ── Step 5: LLM moment selection ──────────────────────────────────
-    let mut key_moments: Vec<crate::moments::KeyMoment> = Vec::new();
-    if !transcript_segments.is_empty() {
-        let text = crate::moments::format_transcript_for_analysis(&transcript_segments);
-        let scene_text = format_scene_text(&scene_boundaries);
-        match crate::llm::select_moments(
-            &text,
-            &dl_result.info.title,
-            dl_result.info.uploader.as_deref().unwrap_or("Unknown"),
-            duration,
-            &scene_text,
-            &config,
-        ).await {
-            Some(moments) => {
-                eprintln!("[watch2] {} key moments from LLM", moments.len());
-                // Save key_moments.json for reference / debugging
-                if let Ok(json) = serde_json::to_string_pretty(&moments) {
-                    let _ = std::fs::write(work.join("key_moments.json"), &json);
-                }
-                key_moments = moments;
-            }
-            None => eprintln!("[watch2] LLM moment selection failed or returned empty"),
+        if cli.no_whisper {
+            anyhow::bail!("No transcript available. Provide subtitles or remove --no-whisper flag.");
+        } else if !config.has_whisper_key() {
+            anyhow::bail!("No transcript available. Set GROQ_API_KEY or OPENAI_API_KEY for Whisper transcription.");
+        } else {
+            anyhow::bail!("No transcript available. Whisper transcription failed — check API key and video format.");
         }
-    } else {
-        eprintln!("[watch2] no transcript — skipping moment selection");
     }
 
-    // ── Step 6: Extract frames ────────────────────────────────────────
+    // ── Step 5: Extract uniform frames ────────────────────────────────
     let mut frame_vec: Vec<FrameInfo> = Vec::new();
     let mut frame_meta = empty_frame_meta();
 
-    if !key_moments.is_empty() {
-        // Extract at moment timestamps
-        let timestamps = crate::moment_frames::get_timestamps_from_moments(&key_moments, None);
-        eprintln!("[watch2] {} timestamps for extraction", timestamps.len());
-
-        if let Some(ref vp) = video_path {
-            let (extracted, meta) = frames::extract_at_timestamps(
-                vp, &frames_dir, &timestamps, cli.resolution, None, None, None,
-            )?;
-            crate::moment_frames::update_moments_with_frames(&mut key_moments, &extracted);
-            frame_vec = extracted;
-            frame_meta = meta;
-        } else {
-            eprintln!("[watch2] ⚠️  No video available for frame extraction");
-        }
-    } else if video_path.is_some() {
-        // Fallback: extract uniform frames across the video
+    // Agent will handle moment selection via LLM, then call with --timestamps
+    // For now, extract uniform frames as baseline for agent to work with
+    if video_path.is_some() {
         let timestamps = generate_uniform_timestamps(duration, max_frames);
         if !timestamps.is_empty() {
-            eprintln!("[watch2] {} uniform timestamps (fallback)", timestamps.len());
+            eprintln!("[watch2] {} uniform timestamps", timestamps.len());
             if let Some(ref vp) = video_path {
                 let (extracted, meta) = frames::extract_at_timestamps(
                     vp, &frames_dir, &timestamps, cli.resolution, None, None, None,
@@ -133,15 +91,10 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         }
     }
 
-    // ── Step 7: Build report ──────────────────────────────────────────
-    let key_moments_raw: Vec<serde_json::Value> = key_moments.iter()
-        .map(|m| serde_json::to_value(m).unwrap_or_default())
-        .collect();
-    let key_moment_stats = if key_moments_raw.is_empty() {
-        None
-    } else {
-        Some(build_moment_stats(&key_moments_raw))
-    };
+    // ── Step 6: Build report ──────────────────────────────────────────
+    // No key moments in binary — agent handles moment selection via LLM
+    let key_moments_raw: Vec<serde_json::Value> = Vec::new();
+    let key_moment_stats = None;
     let scene_count = if scene_boundaries.is_empty() { None } else { Some(scene_boundaries.len()) };
 
     let report = build_report(
@@ -150,7 +103,7 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         key_moments_raw, key_moment_stats, scene_count, scene_boundaries, None,
     );
 
-    // ── Step 8: Cleanup video (after report is ready) ─────────────────
+    // ── Step 7: Cleanup video (after report is ready) ─────────────────
     cleanup(&cli, &work, &video_path);
 
     Ok(report)
@@ -163,22 +116,6 @@ fn empty_frame_meta() -> frames::FrameMeta {
         engine: "none".into(), candidate_count: 0, selected_count: 0,
         deduped_count: 0, fallback: false, dropped_out_of_window: 0,
     }
-}
-
-/// Format scene boundaries as human-readable text for the LLM prompt.
-fn format_scene_text(boundaries: &[crate::scene_detect::SceneBoundary]) -> String {
-    if boundaries.is_empty() {
-        return "No scene changes detected.".to_string();
-    }
-    boundaries.iter().enumerate().map(|(i, b)| {
-        format!(
-            "Scene {}: {} - {} ({:.1}s)",
-            i + 1,
-            crate::moments::format_timestamp(b.start_sec),
-            crate::moments::format_timestamp(b.end_sec),
-            b.duration_sec,
-        )
-    }).collect::<Vec<_>>().join("\n")
 }
 
 /// Generate evenly-spaced timestamps across the video for uniform frame extraction.
@@ -201,45 +138,6 @@ fn detect_scenes(vp: &std::path::Path, duration: f64) -> Vec<crate::scene_detect
         Err(e) => { eprintln!("[watch2] scene detection failed: {}", e); vec![] }
     }
 }
-
-fn build_moment_stats(raw: &[serde_json::Value]) -> crate::output::KeyMomentStats {
-    let mut by_reason: HashMap<String, usize> = HashMap::new();
-    let mut by_priority: HashMap<u32, usize> = HashMap::new();
-    for m in raw {
-        if let Some(r) = m.get("reason").and_then(|v| v.as_str()) {
-            *by_reason.entry(r.to_string()).or_insert(0) += 1;
-        }
-        if let Some(p) = m.get("priority").and_then(|v| v.as_u64()) {
-            *by_priority.entry(p as u32).or_insert(0) += 1;
-        }
-    }
-    crate::output::KeyMomentStats { total: raw.len(), by_reason, by_priority }
-}
-
-async fn detect_language(
-    source: &str, dl: &download::DownloadResult, config: &WatchConfig,
-    cache: &mut Option<crate::cache::VideoCache>,
-) -> Option<String> {
-    // Cache → metadata → LLM
-    let cached = cache.as_mut().and_then(|c| c.get_cached_language(source));
-    if let Some(ref lang) = cached {
-        eprintln!("[watch2] language from cache: {}", lang);
-        if let Some(c) = cache { let _ = c.store_language(source, lang); }
-        return cached;
-    }
-    if let Some(ref lang) = dl.info.language {
-        eprintln!("[watch2] language from metadata: {}", lang);
-        if let Some(c) = cache { let _ = c.store_language(source, lang); }
-        return Some(lang.clone());
-    }
-    let lang = crate::llm::detect_language_llm(&dl.info.title, dl.info.description.as_deref(), config).await;
-    if let Some(ref l) = lang {
-        eprintln!("[watch2] LLM detected language: {}", l);
-        if let Some(c) = cache { let _ = c.store_language(source, l); }
-    }
-    lang
-}
-
 /// Quick language detection via yt-dlp metadata (no video download).
 /// Returns language code or None if detection fails.
 fn detect_language_quick(url: &str, use_cookies: bool) -> Option<String> {
