@@ -133,10 +133,7 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         }
     }
 
-    // ── Step 7: Cleanup video ─────────────────────────────────────────
-    cleanup(&cli, &work, &video_path);
-
-    // ── Step 8: Build report ──────────────────────────────────────────
+    // ── Step 7: Build report ──────────────────────────────────────────
     let key_moments_raw: Vec<serde_json::Value> = key_moments.iter()
         .map(|m| serde_json::to_value(m).unwrap_or_default())
         .collect();
@@ -147,11 +144,16 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
     };
     let scene_count = if scene_boundaries.is_empty() { None } else { Some(scene_boundaries.len()) };
 
-    Ok(build_report(
+    let report = build_report(
         &cli, &work, &dl_result, frame_vec, frame_meta.deduped_count,
         &frame_meta, transcript_segments, &transcript_source, duration, false,
         key_moments_raw, key_moment_stats, scene_count, scene_boundaries, None,
-    ))
+    );
+
+    // ── Step 8: Cleanup video (after report is ready) ─────────────────
+    cleanup(&cli, &work, &video_path);
+
+    Ok(report)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
