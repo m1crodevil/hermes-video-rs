@@ -186,7 +186,7 @@ fn generate_uniform_timestamps(duration: f64, count: u32) -> Vec<f64> {
     if duration <= 0.0 || count == 0 {
         return Vec::new();
     }
-    let n = count.min(20).max(1);
+    let n = count.min(21).max(1);
     let step = duration / (n as f64 + 1.0);
     (1..=n).map(|i| step * i as f64).collect()
 }
