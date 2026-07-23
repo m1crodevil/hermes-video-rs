@@ -5,6 +5,7 @@ use crate::download;
 use crate::frames;
 use crate::output::{FrameInfo, WatchReport};
 use crate::transcript;
+use crate::timestamp;
 use crate::whisper;
 use std::path::PathBuf;
 
@@ -72,22 +73,30 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
     }
 
     // ── Step 5: Extract uniform frames ────────────────────────────────
+    // ── Step 5: Extract frames ────────────────────────────────────────
     let mut frame_vec: Vec<FrameInfo> = Vec::new();
     let mut frame_meta = empty_frame_meta();
+    if let Some(ref vp) = video_path {
+        let timestamps = if let Some(ref ts_str) = cli.timestamps {
+            // Agent-provided timestamps (moment selection)
+            let parsed: Vec<f64> = ts_str.split(',')
+                .filter_map(|s| timestamp::parse_time(Some(s.trim())))
+                .collect();
+            eprintln!("[watch2] {} agent-provided timestamps", parsed.len());
+            parsed
+        } else {
+            // Uniform timestamps (baseline)
+            let uniform = generate_uniform_timestamps(duration, max_frames);
+            eprintln!("[watch2] {} uniform timestamps", uniform.len());
+            uniform
+        };
 
-    // Agent will handle moment selection via LLM, then call with --timestamps
-    // For now, extract uniform frames as baseline for agent to work with
-    if video_path.is_some() {
-        let timestamps = generate_uniform_timestamps(duration, max_frames);
         if !timestamps.is_empty() {
-            eprintln!("[watch2] {} uniform timestamps", timestamps.len());
-            if let Some(ref vp) = video_path {
-                let (extracted, meta) = frames::extract_at_timestamps(
-                    vp, &frames_dir, &timestamps, cli.resolution, None, None, None,
-                )?;
-                frame_vec = extracted;
-                frame_meta = meta;
-            }
+            let (extracted, meta) = frames::extract_at_timestamps(
+                vp, &frames_dir, &timestamps, cli.resolution, None, None, None,
+            )?;
+            frame_vec = extracted;
+            frame_meta = meta;
         }
     }
 

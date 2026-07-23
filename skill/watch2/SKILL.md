@@ -1,6 +1,6 @@
 ---
 name: watch2
-version: "7.0.0"
+version: "7.1.0"
 description: "Watch a video (URL or local path). Rust-powered analysis — single linear pipeline, no mode selection needed."
 argument-hint: " <url-or-path> [question]"
 allowed-tools: Bash, Read, AskUserQuestion
@@ -48,7 +48,31 @@ The user wants to understand what the video is about. Your job is to deliver a c
 
 **NEVER use `execute_code` or Python scripts** during watch2 analysis. The Rust binary is pure Python-free. Write findings in your response, not to JSON files.
 
-## Output Format (Telegram)
+## Mandatory Agent Workflow
+
+**After running the binary, agent MUST complete ALL steps. Skipping steps produces shallow analysis.**
+
+### Step-by-Step Checklist
+
+| Step | Action | Required |
+|------|--------|----------|
+| □ 1 | Run binary: `watch2 "URL" --keep-video --out-dir /tmp/watch-XXX --output both` | ✅ |
+| □ 2 | Read `report.json` — get transcript, scenes, metadata | ✅ |
+| □ 3 | **LLM: Detect language** from transcript (ISO 639-1 code) | ✅ |
+| □ 4 | **LLM: Select 15-20 key moments** from transcript + scene data | ✅ |
+| □ 5 | **Extract frames at moment timestamps**: `watch2 "URL" --timestamps "00:30,01:15,..." --out-dir /tmp/watch-XXX --keep-video` | ✅ |
+| □ 6 | **Vision analyze ALL frames** (≥21 minimum, no exceptions) | ✅ |
+| □ 7 | **Cross-reference**: transcript claims × visual evidence | ✅ |
+| □ 8 | **Generate comprehensive analysis** — combining all data sources | ✅ |
+
+### Why Each Step Matters
+
+- **Step 3 (Language)**: Auto-captions often misspell proper nouns. Language context helps accurate moment selection.
+- **Step 4 (Moments)**: Uniform sampling misses key moments. LLM selects moments that need visual verification.
+- **Step 5 (Additional frames)**: Baseline uniform frames + moment-specific frames = comprehensive visual coverage.
+- **Step 6 (Vision)**: Every frame must be analyzed. Skipping frames = blind spots.
+- **Step 7 (Cross-reference)**: Transcript says "X shows Y" → vision confirms/denies. This is the core value of the pipeline.
+- **Step 8 (Analysis)**: Final output must combine transcript insights, scene context, and visual evidence.
 
 Always use this structure when delivering watch2 results:
 
@@ -166,7 +190,7 @@ watch2 performs data extraction in **one pass**:
 
 ```bash
 # Binary extracts data — agent handles intelligence
-watch2 "https://youtu.be/abc" --out-dir /tmp/watch-XXX --output both
+watch2 "https://youtu.be/abc" --keep-video --out-dir /tmp/watch-XXX --output both
 ```
 
 1. **Run watch2** — binary handles everything:
@@ -175,23 +199,25 @@ watch2 "https://youtu.be/abc" --out-dir /tmp/watch-XXX --output both
    - Parses transcript
    - Extracts uniform frames (baseline)
    - Builds report.json
-   - Cleans up video
+   - **Keeps video** (via `--keep-video`) for additional frame extraction
 
 2. **Agent reads report.json** — contains transcript, scenes, metadata, frame paths
 
 3. **Agent selects key moments via LLM** — using transcript + scene data:
    - Language detection
    - Moment selection (what needs visual verification)
-   - Returns timestamps
+   - Returns timestamps (e.g. "00:30,01:15,02:45,03:30,...")
 
-4. **Agent extracts frames at moment timestamps** (if more frames needed):
+4. **Agent extracts frames at moment timestamps**:
    ```bash
-   watch2 "URL" --timestamps "00:30,01:15,02:45,... --out-dir /tmp/watch-XXX"
+   watch2 "URL" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/watch-XXX --output both
    ```
 
-5. **Agent vision_analyze all frames** (≥21 minimum)
+5. **Agent vision_analyze all frames** (uniform + moment frames, ≥21 minimum)
 
-6. **Agent generates comprehensive analysis** — combining transcript, scenes, vision results
+6. **Agent cross-references** transcript × scenes × vision
+
+7. **Agent generates comprehensive analysis** — combining all data sources
 
 ### Background Mode (Long Videos >10 min)
 
@@ -252,8 +278,11 @@ Binary auto-selects analysis mode internally. No manual mode flags needed.
 | `--output markdown\|json\|both` | Output format | markdown |
 | `--no-cache` | Disable download cache | false |
 | `--cache-dir DIR` | Custom cache directory | `~/.cache/watch2` |
+| `--timestamps T` | Comma-separated timestamps for cue frame extraction (e.g. "00:30,01:15,02:45") | none |
 
 > **Note**: The binary internally selects the optimal analysis pipeline based on captions availability, video duration, and scene complexity. Check the `engine` field in `report.json` to see which pipeline was used.
+
+> **`--timestamps` usage**: When set, the binary extracts frames ONLY at these timestamps (skips uniform extraction). Use this after agent-side moment selection to get frames at key moments.
 
 ## Analysis Modes (Internal)
 
