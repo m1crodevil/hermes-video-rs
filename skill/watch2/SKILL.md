@@ -1,6 +1,6 @@
 ---
 name: watch2
-version: "6.2.0"
+version: "6.3.0"
 description: "Watch a video (URL or local path). Rust-powered analysis — single linear pipeline, no mode selection needed."
 argument-hint: " <url-or-path> [question]"
 allowed-tools: Bash, Read, AskUserQuestion
@@ -429,15 +429,20 @@ This produces equivalent output to watch2's transcript-moments mode. Always veri
 
 ### Subtitle Download Strategy (v4.5.0+)
 
-**How it works:** watch2 now downloads ALL available subtitle languages (`--sub-langs ".*"`) instead of guessing the language first. This eliminates YouTube 429 rate-limit issues that previously blocked English auto-captions for non-English videos.
+**How it works:** watch2 detects the video language first via yt-dlp metadata (`--print language`), then downloads only matching subtitles (`--sub-langs "id.*"` instead of `--sub-langs ".*"`). This reduces subtitle requests from ~157 to 1-2 per video.
 
-**Why "download all":**
+**Language detection chain:**
+1. Quick metadata call: `yt-dlp --skip-download --write-info-json --print language`
+2. If language detected → download only matching subs (e.g., `id.*`)
+3. If detection fails → fallback to downloading all languages (`".*"` )
+
+**Why targeted download:**
 - YouTube rate-limits English auto-captions for non-English videos (HTTP 429)
-- On first run, no `info.json` exists → language defaults to "en" → 429
-- Downloading all languages (~20MB total) ensures at least one succeeds
-- `find_subtitle()` automatically picks the best matching language after download
+- Detecting language first → only 1-2 subtitle requests instead of 157
+- Faster: ~3-5 sec subtitle download instead of ~8 min
+- Lower risk of YouTube 429 rate-limiting
 
-**Tradeoff:** ~20MB additional download (157 languages × 128KB each). Acceptable for videos that are already 20MB+.
+**Tradeoff:** 1 extra metadata request (~1 sec) to detect language before full download.
 
 **If subtitles still fail:**
 ```bash

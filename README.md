@@ -55,11 +55,11 @@ watch2 runs a **single linear pipeline** — no mode branching, no configuration
 ```
 Video URL / local path
     ↓
-1. Download video (720p) + ALL subtitles (JSON3) via yt-dlp
+1. Detect language via yt-dlp metadata (quick, no download)
     ↓
-2. Parse transcript from best-matching subtitle file
+2. Download video (720p) + targeted subtitles (JSON3) via yt-dlp
     ↓
-3. LLM language detection (for URLs — helps pick best subtitles)
+3. Parse transcript from best-matching subtitle file
     ↓
 4. Whisper fallback (if no captions and API key available)
     ↓
@@ -76,12 +76,13 @@ Video URL / local path
 
 watch2 runs everything in one pass — no re-running, no intermediate files:
 
-1. Downloads the video and ALL subtitles (avoids YouTube 429 rate-limits)
-2. Parses the transcript from the best-matching language
-3. Runs scene detection
-4. Sends the transcript to an LLM (Groq/OpenAI) which selects the key moments inline
-5. Extracts frames at those timestamps
-6. Builds a `WatchReport` with frames, transcript, scene boundaries, and key moment metadata
+1. Detects language via quick metadata call (~1 sec)
+2. Downloads the video and targeted subtitles (1-2 requests instead of 157)
+3. Parses the transcript from the best-matching language
+4. Runs scene detection
+5. Sends the transcript to an LLM (Groq/OpenAI) which selects the key moments inline
+6. Extracts frames at those timestamps
+7. Builds a `WatchReport` with frames, transcript, scene boundaries, and key moment metadata
 7. Cleans up the video file
 
 Everything happens in a single invocation. No `moments_prompt.txt`, no `key_moments.json`, no agent handoff — the LLM selects moments directly during the pipeline run.

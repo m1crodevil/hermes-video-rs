@@ -238,6 +238,39 @@ async fn detect_language(
     lang
 }
 
+/// Quick language detection via yt-dlp metadata (no video download).
+/// Returns language code or None if detection fails.
+fn detect_language_quick(url: &str, use_cookies: bool) -> Option<String> {
+    let url = crate::download::sanitize_url(url);
+    let network_opts = crate::download::ytdlp_network_opts(use_cookies);
+    let mut args: Vec<&str> = vec![
+        "--skip-download",
+        "--write-info-json",
+        "--print", "language",
+        "--no-playlist",
+    ];
+    for opt in &network_opts {
+        args.push(opt.as_str());
+    }
+    args.push("--");
+    args.push(&url);
+
+    let output = std::process::Command::new("yt-dlp")
+        .args(&args)
+        .output()
+        .ok()?;
+
+    let lang = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .to_string();
+
+    if lang.is_empty() || lang == "NA" {
+        None
+    } else {
+        Some(lang)
+    }
+}
+
 async fn run_whisper_fallback(
     config: &WatchConfig, work: &PathBuf, video_path: &Option<PathBuf>,
     segments: &mut Vec<crate::output::TranscriptSegment>, source: &mut String,
@@ -295,9 +328,11 @@ fn ensure_resources(
 
     // Download with retry
     let mut last_err: Option<crate::error::WatchError> = None;
+    // Detect language before download to minimize subtitle requests
+    let detected_lang = detect_language_quick(source, use_cookies);
     for attempt in 1..=3u32 {
         eprintln!("[watch2] downloading (attempt {}/3)...", attempt);
-        match crate::download::download_video(source, download_dir, use_cookies, None) {
+        match crate::download::download_video(source, download_dir, use_cookies, None, detected_lang.as_deref()) {
             Ok(result) => {
                 // Cache the result
                 if let Some(c) = cache {

@@ -327,36 +327,51 @@ pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
 // download_video — full download with subtitles, YouTube 2026 opts
 // ---------------------------------------------------------------------------
 
-pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Option<&str>) -> Result<DownloadResult> {
+pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Option<&str>, lang: Option<&str>) -> Result<DownloadResult> {
     let url = sanitize_url(url);
     std::fs::create_dir_all(out_dir)?;
     let output_template = out_dir.join("video.%(ext)s").to_string_lossy().to_string();
 
     let network_opts = ytdlp_network_opts(use_cookies);
 
-    // --- Reuse existing metadata from fetch_captions() if available ---
-    let existing_info = extract_info(out_dir);
-    let detected_lang = if let Some(ref lang) = existing_info.language {
-        lang.clone()
+    // --- Language detection: caller-provided > metadata > list-subs fallback ---
+    let detected_lang = if let Some(l) = lang {
+        l.to_string()
     } else {
-        // Fallback: detect from available subs (only if no info.json exists)
-        let (manual_subs, auto_subs) = list_available_subtitles(&url, use_cookies);
-        suggest_subtitle_language(
-            existing_info.language.as_deref(),
-            &manual_subs,
-            &auto_subs,
-            llm_lang,
-        )
+        let existing_info = extract_info(out_dir);
+        if let Some(ref l) = existing_info.language {
+            l.clone()
+        } else {
+            let (manual_subs, auto_subs) = list_available_subtitles(&url, use_cookies);
+            suggest_subtitle_language(
+                existing_info.language.as_deref(),
+                &manual_subs,
+                &auto_subs,
+                llm_lang,
+            )
+        }
     };
 
     if !is_valid_lang(&detected_lang) {
         eprintln!("[watch2] detected lang '{}' not in whitelist, falling back to en", detected_lang);
     }
     let lang_name = get_language_name(&detected_lang);
-    eprintln!(
-        "[watch2] subtitle language: {} ({}) — downloading ALL languages",
-        lang_name, detected_lang
-    );
+
+    // Use targeted subtitle download when language is known, fallback to all
+    let sub_langs = if lang.is_some() || detected_lang != "en" {
+        let pattern = subtitle_lang_pattern(&detected_lang);
+        eprintln!(
+            "[watch2] subtitle language: {} ({}) — pattern: {}",
+            lang_name, detected_lang, pattern
+        );
+        pattern
+    } else {
+        eprintln!(
+            "[watch2] subtitle language: {} ({}) — downloading ALL languages",
+            lang_name, detected_lang
+        );
+        ".*".to_string()
+    };
 
     // --- Single pass: full download with subtitles (NO separate metadata fetch) ---
     // Clean stale subtitles from any prior runs to avoid cross-language conflicts
@@ -374,7 +389,7 @@ pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
         "--write-info-json",  // Re-generate info.json with full download
         "--write-subs",
         "--write-auto-subs",
-        "--sub-langs", ".*",
+        "--sub-langs", &sub_langs,
         "--sub-format", "json3/best",
         "-o", &output_template,
         "--", &url,
