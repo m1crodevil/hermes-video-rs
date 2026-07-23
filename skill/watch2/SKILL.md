@@ -1,7 +1,7 @@
 ---
 name: watch2
-version: "7.1.0"
-description: "Watch a video (URL or local path). Rust-powered analysis — single linear pipeline, no mode selection needed."
+version: "7.2.0"
+description: "Watch a video (URL or local path). Rust-powered analysis — transcript-first workflow with JSON3 + scene data for intelligent moment selection."
 argument-hint: " <url-or-path> [question]"
 allowed-tools: Bash, Read, AskUserQuestion
 homepage: https://github.com/m1crodevil/hermes-video-rs
@@ -52,27 +52,161 @@ The user wants to understand what the video is about. Your job is to deliver a c
 
 **After running the binary, agent MUST complete ALL steps. Skipping steps produces shallow analysis.**
 
-### Step-by-Step Checklist
+### Decision Tree: Transcript Availability
 
-| Step | Action | Required |
-|------|--------|----------|
-| □ 1 | Run binary: `watch2 "URL" --keep-video --out-dir /tmp/watch-XXX --output both` | ✅ |
-| □ 2 | Read `report.json` — get transcript, scenes, metadata | ✅ |
-| □ 3 | **LLM: Detect language** from transcript (ISO 639-1 code) | ✅ |
-| □ 4 | **LLM: Select 15-20 key moments** from transcript + scene data | ✅ |
-| □ 5 | **Extract frames at moment timestamps**: `watch2 "URL" --timestamps "00:30,01:15,..." --out-dir /tmp/watch-XXX --keep-video` | ✅ |
-| □ 6 | **Vision analyze ALL frames** (≥21 minimum, no exceptions) | ✅ |
-| □ 7 | **Cross-reference**: transcript claims × visual evidence | ✅ |
-| □ 8 | **Generate comprehensive analysis** — combining all data sources | ✅ |
+```
+Has transcript (JSON3/VTT)?
+├── YES → Use transcript-first workflow (Step 1A → 1B → 2-8)
+└── NO  → Use scene-detection workflow (Step 1C → 2-8)
+```
+
+### Transcript-First Workflow (MANDATORY for videos with captions)
+
+**Step 1A: Download video + get transcript (NO frame extraction yet)**
+```bash
+watch2 "URL" --detail transcript --out-dir /tmp/watch-XXX --output both
+```
+- Downloads video + subtitles
+- Parses JSON3 transcript with word-level timing
+- Runs scene detection (av-scenechange)
+- Outputs `report.json` with transcript + scene_boundaries
+- **Does NOT extract frames yet** — agent must select moments first
+
+**Step 1B: Read report.json — extract JSON3 + scene data**
+```bash
+# Get transcript with word-level timing
+rtk jq '.transcript[] | {start, end, text, words}' /tmp/watch-XXX/report.json
+
+# Get scene boundaries (465+ scene changes with timing)
+rtk jq '.scene_boundaries[] | {start_sec, end_sec, duration_sec}' /tmp/watch-XXX/report.json
+
+# Get metadata
+rtk jq '{title, uploader, duration, language, scene_count}' /tmp/watch-XXX/report.json
+```
+
+**Step 2: LLM Detect Language** (ISO 639-1 code)
+- Read transcript text
+- Identify language (e.g., "en", "id", "ja")
+- Language context helps accurate moment selection
+
+**Step 3: LLM Select Key Moments** (MANDATORY — using JSON3 + scene data)
+
+Agent MUST select 15-20 key moments using this data:
+
+```python
+# Moment Selection Prompt Template
+MOMENT_SELECTION_PROMPT = """
+You are analyzing a video transcript + scene changes to identify key moments for visual verification.
+
+VIDEO METADATA:
+- Title: {title}
+- Uploader: {uploader}
+- Duration: {duration}s ({duration_fmt})
+- Language: {language}
+- Scene Changes: {scene_count}
+
+TRANSCRIPT (JSON3 with word-level timing):
+{transcript_sample}
+
+SCENE BOUNDARIES (av-scenechange detection):
+{scene_boundaries_sample}
+
+YOUR TASK: Select 15-20 key moments where visual verification would improve accuracy.
+
+MOMENT SELECTION CRITERIA:
+1. **Proper nouns** — names, brands, titles that might be misspelled in auto-captions
+2. **Claims/statistics** — numbers, prices, dates that need fact-checking
+3. **Deictic references** — "this", "that", "here", "look at this" where speaker points
+4. **Topic transitions** — moments where conversation shifts (use scene_boundaries)
+5. **Key arguments** — important conclusions or controversial statements
+6. **Visual context** — moments where understanding visuals changes interpretation
+
+SCENE-BOUNDARY INTELLIGENCE:
+- Scene changes indicate visual transitions (camera cuts, graphics, slides)
+- High-cost scene changes (inter_cost > 30) = major visual shifts
+- Use scene_boundaries to identify timestamps where visuals change significantly
+
+JSON3 WORD-LEVEL INTELLIGENCE:
+- Word confidence scores indicate ASR reliability
+- Low confidence words (confidence < 0.5) = potential misspellings
+- Use word.start timestamps for precise moment timing
+
+OUTPUT FORMAT: Return ONLY a JSON array of moments:
+[
+  {{
+    "timestamp": 54.0,
+    "timestamp_fmt": "0:54",
+    "word": "Ragnarok",
+    "context": "Ya kan Ragnarok. Tahu Ragnarok?",
+    "reason": "proper_noun",
+    "question": "What game name is displayed on screen?",
+    "priority": 1
+  }}
+]
+
+RULES:
+- timestamp: f64 seconds (NOT MM:SS string)
+- timestamp_fmt: MM:SS string (agent MUST provide)
+- reason: one of [proper_noun, claim, deictic, speaker_id, visual_context, entity, topic_transition, key_argument]
+- priority: 1 (critical) to 5 (nice-to-have)
+- Spread moments evenly across FULL duration
+- Include moments from beginning, middle, AND end
+"""
+```
+
+**Step 3A: Agent processes moment selection**
+1. Read transcript from report.json (JSON3 with word-level timing)
+2. Read scene_boundaries from report.json (av-scenechange data)
+3. Apply MOMENT_SELECTION_PROMPT template
+4. Select 15-20 key moments using LLM
+5. Output timestamps as comma-separated string
+
+**Step 4: Extract frames at moment timestamps**
+```bash
+# Agent passes selected timestamps to binary
+watch2 "URL" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/watch-XXX
+```
+- Binary extracts frames ONLY at these timestamps
+- No uniform extraction — only LLM-selected moments
+- Each frame gets `reason: "transcript-cue"` metadata
+
+**Step 5: Vision analyze ALL frames** (≥21 minimum, no exceptions)
+- Analyze every extracted frame
+- Use moment.question for each frame
+- Cross-reference with transcript text
+
+**Step 6: Cross-reference** transcript × scenes × vision
+- Compare transcript claims vs visual evidence
+- Identify corrections (ASR errors, visual context)
+- Flag unverified claims
+
+**Step 7: Generate comprehensive analysis**
+- Combine transcript insights + scene context + visual evidence
+- Deliver final summary (no process artifacts)
+
+### Scene-Detection Workflow (for videos WITHOUT captions)
+
+**Step 1C: Run binary with scene detection**
+```bash
+watch2 "URL" --out-dir /tmp/watch-XXX --output both
+```
+- Binary auto-selects scene/keyframe/uniform engine
+- Extracts frames at scene boundaries or uniform intervals
+
+**Step 2-8: Same as transcript workflow**
+- Agent reads report.json
+- Vision analyze all frames
+- Generate analysis (transcript claims unverified if no captions)
 
 ### Why Each Step Matters
 
-- **Step 3 (Language)**: Auto-captions often misspell proper nouns. Language context helps accurate moment selection.
-- **Step 4 (Moments)**: Uniform sampling misses key moments. LLM selects moments that need visual verification.
-- **Step 5 (Additional frames)**: Baseline uniform frames + moment-specific frames = comprehensive visual coverage.
-- **Step 6 (Vision)**: Every frame must be analyzed. Skipping frames = blind spots.
-- **Step 7 (Cross-reference)**: Transcript says "X shows Y" → vision confirms/denies. This is the core value of the pipeline.
-- **Step 8 (Analysis)**: Final output must combine transcript insights, scene context, and visual evidence.
+- **Step 1A (Transcript-only)**: Gets JSON3 + scene data without wasting frames on uniform extraction
+- **Step 1B (Data extraction)**: Provides word-level timing + scene boundaries for intelligent moment selection
+- **Step 3 (LLM moment selection)**: Uses JSON3 confidence scores + scene costs to select moments needing visual verification
+- **Step 4 (Timestamp extraction)**: Frames extracted at LLM-selected moments, not uniform intervals
+- **Step 5 (Vision analysis)**: Every frame analyzed — no blind spots
+- **Step 6 (Cross-reference)**: Transcript says "X shows Y" → vision confirms/denies. Core value of pipeline.
+- **Step 7 (Analysis)**: Final output combines all data sources
 
 Always use this structure when delivering watch2 results:
 
@@ -138,84 +272,165 @@ which av-scenechange
 
 ## Quick Start
 
+### Transcript-First Workflow (Recommended for videos with captions)
+
 ```bash
-# Binary auto-selects analysis mode based on video properties
+# Step 1A: Get transcript + scene data (NO frames yet)
+watch2 "https://youtu.be/abc" --detail transcript --out-dir /tmp/watch-XXX --output both
+
+# Step 1B: Read data (agent does this)
+rtk jq '{title, uploader, duration, language, scene_count}' /tmp/watch-XXX/report.json
+rtk jq '.transcript[] | {start, end, text}' /tmp/watch-XXX/report.json | head -100
+rtk jq '.scene_boundaries[] | {start_sec, end_sec, duration_sec}' /tmp/watch-XXX/report.json | head -50
+
+# Step 2-3: Agent selects moments via LLM (using JSON3 + scene data)
+# Agent outputs: "00:30,01:15,02:45,03:30,..."
+
+# Step 4: Extract frames at LLM-selected moments
+watch2 "https://youtu.be/abc" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/watch-XXX
+
+# Step 5-7: Vision analyze + cross-reference + analysis
+```
+
+### Scene-Detection Workflow (for videos WITHOUT captions)
+
+```bash
+# Binary auto-selects scene/keyframe/uniform engine
 watch2 "https://youtu.be/abc" --out-dir /tmp/watch-XXX --output both
 
-# Local file
-watch2 ~/Videos/recording.mp4 --output both
+# Agent reads report.json, vision analyzes all frames
+```
 
-# Custom resolution
-watch2 "https://youtu.be/abc" --resolution 720 --out-dir /tmp/watch-XXX
+### Local File
+
+```bash
+watch2 ~/Videos/recording.mp4 --detail transcript --out-dir /tmp/watch-XXX --output both
+```
+
+### Custom Resolution
+
+```bash
+watch2 "https://youtu.be/abc" --resolution 720 --detail transcript --out-dir /tmp/watch-XXX
 ```
 
 ## Decision Tree
 
 ```
-Binary auto-selects analysis mode:
-├── Video has captions → transcript-moments (auto-detected)
-├── Video without captions → scene detection (auto-detected)
-└── Agent reads report.json → vision_analyze on extracted frames
+Video has captions (JSON3/VTT)?
+├── YES → Transcript-first workflow:
+│   ├── Step 1A: watch2 --detail transcript (get data only)
+│   ├── Step 1B: Read report.json (JSON3 + scene_boundaries)
+│   ├── Step 2: LLM detect language
+│   ├── Step 3: LLM select 15-20 key moments (using JSON3 + scene data)
+│   ├── Step 4: watch2 --timestamps "00:30,01:15,..." (extract at moments)
+│   ├── Step 5: vision_analyze all frames (≥21 minimum)
+│   ├── Step 6: Cross-reference transcript × scenes × vision
+│   └── Step 7: Generate comprehensive analysis
+│
+└── NO → Scene-detection workflow:
+    ├── Step 1C: watch2 (auto-selects scene/keyframe/uniform)
+    ├── Step 2: Read report.json
+    ├── Step 3: vision_analyze all frames (≥21 minimum)
+    └── Step 4: Generate analysis (transcript claims unverified)
 ```
 
 ## Workflow
 
-### New Architecture (v7.0.0)
+### New Architecture (v7.1.0)
 
 The binary handles data extraction only. All intelligence (LLM calls, moment selection, analysis) is done by the agent.
 
 ```
-Binary (Rust) — NO LLM calls:
-  1. Download video + subtitles
-  2. Parse transcript (JSON3)
-  3. Scene detection (av-scenechange)
-  4. If no transcript + no GROQ_API_KEY → STOP with error
-  5. Extract uniform frames (baseline)
-  6. Output: report.json (transcript + scenes + metadata + frame paths)
-  7. Cleanup video
+Transcript-First Workflow (MANDATORY for videos with captions):
 
-Agent (Hermes) — ALL intelligence:
-  1. Read report.json
-  2. Language detection via LLM
-  3. Select key moments via LLM (using transcript + scene data)
-  4. Extract frames at moment timestamps (binary via --timestamps)
-  5. Vision analyze all frames (≥21 minimum)
-  6. Cross-reference: transcript × scenes × vision
-  7. Generate comprehensive final analysis
+Phase 1: Data Extraction (Binary)
+├── watch2 --detail transcript
+├── Downloads video + subtitles
+├── Parses JSON3 transcript (word-level timing + confidence scores)
+├── Runs scene detection (av-scenechange) → scene_boundaries
+├── Outputs: report.json (transcript + scene_boundaries + metadata)
+└── Does NOT extract frames (agent must select moments first)
+
+Phase 2: Moment Selection (Agent — LLM)
+├── Read report.json → JSON3 transcript + scene_boundaries
+├── LLM detects language (ISO 639-1)
+├── LLM selects 15-20 key moments using:
+│   ├── JSON3 word confidence scores (low confidence = potential errors)
+│   ├── Scene boundary costs (high cost = major visual shifts)
+│   ├── Transcript context (proper nouns, claims, deictic refs)
+│   └── Topic transitions (scene changes indicate shifts)
+└── Output: timestamps as comma-separated string
+
+Phase 3: Frame Extraction (Binary)
+├── watch2 --timestamps "00:30,01:15,02:45,..."
+├── Extracts frames ONLY at LLM-selected timestamps
+├── Each frame gets reason: "transcript-cue" metadata
+└── No uniform extraction — only intelligent moments
+
+Phase 4: Vision Analysis (Agent)
+├── vision_analyze every frame (≥21 minimum)
+├── Use moment.question for each frame
+├── Cross-reference with transcript text
+└── Identify corrections (ASR errors, visual context)
+
+Phase 5: Synthesis (Agent)
+├── Combine transcript insights + scene context + visual evidence
+├── Generate comprehensive analysis
+└── Deliver final summary (no process artifacts)
 ```
 
-### Single-Run Pipeline (Binary Only)
+### Scene-Detection Workflow (for videos WITHOUT captions)
 
-watch2 performs data extraction in **one pass**:
+```
+Binary auto-selects optimal engine:
+├── scene: av-scenechange detection (≥8 scene changes)
+├── keyframe: I-frame extraction (≥4 I-frames)
+├── uniform: fixed fps fallback
+└── Agent reads report.json → vision_analyze → analysis
+```
 
+### Single-Run Pipeline (Transcript-First)
+
+watch2 performs data extraction in **two passes** for videos with captions:
+
+**Pass 1: Data extraction (NO frames)**
 ```bash
-# Binary extracts data — agent handles intelligence
-watch2 "https://youtu.be/abc" --keep-video --out-dir /tmp/watch-XXX --output both
+watch2 "https://youtu.be/abc" --detail transcript --out-dir /tmp/watch-XXX --output both
 ```
-
-1. **Run watch2** — binary handles everything:
+1. **Run watch2** — binary handles:
    - Downloads video + subtitles
+   - Parses JSON3 transcript (word-level timing + confidence)
    - Runs scene detection (av-scenechange)
-   - Parses transcript
-   - Extracts uniform frames (baseline)
-   - Builds report.json
-   - **Keeps video** (via `--keep-video`) for additional frame extraction
+   - Builds report.json with transcript + scene_boundaries
+   - **Does NOT extract frames** — agent must select moments first
 
-2. **Agent reads report.json** — contains transcript, scenes, metadata, frame paths
+2. **Agent reads report.json** — extracts:
+   - JSON3 transcript with word-level timing
+   - scene_boundaries with465+ scene changes
+   - Metadata (title, uploader, duration, language)
 
-3. **Agent selects key moments via LLM** — using transcript + scene data:
-   - Language detection
-   - Moment selection (what needs visual verification)
+3. **Agent selects key moments via LLM** — using:
+   - JSON3 confidence scores (low confidence = potential errors)
+   - Scene boundary costs (high cost = major visual shifts)
+   - Transcript context (proper nouns, claims, deictic refs)
    - Returns timestamps (e.g. "00:30,01:15,02:45,03:30,...")
 
+**Pass 2: Frame extraction at LLM-selected moments**
+```bash
+watch2 "https://youtu.be/abc" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/watch-XXX
+```
 4. **Agent extracts frames at moment timestamps**:
-   ```bash
-   watch2 "URL" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/watch-XXX --output both
-   ```
+   - Binary extracts frames ONLY at these timestamps
+   - No uniform extraction — only LLM-selected moments
+   - Each frame gets `reason: "transcript-cue"` metadata
 
-5. **Agent vision_analyze all frames** (uniform + moment frames, ≥21 minimum)
+5. **Agent vision_analyze all frames** (≥21 minimum)
+   - Analyze every extracted frame
+   - Use moment.question for each frame
 
 6. **Agent cross-references** transcript × scenes × vision
+   - Compare transcript claims vs visual evidence
+   - Identify corrections (ASR errors, visual context)
 
 7. **Agent generates comprehensive analysis** — combining all data sources
 
@@ -431,9 +646,38 @@ No manual flags needed — just ensure deps are installed.
 
 **No direct LLM calls from binary.** All intelligence is handled by the agent.
 
-- **Language detection** — Agent detects language via LLM from transcript
-- **Moment selection** — Agent selects key moments via LLM using transcript + scene data
-- **Analysis** — Agent generates comprehensive analysis combining all data
+### Moment Selection (MANDATORY)
+
+Agent MUST select key moments using JSON3 + scene data:
+
+**Data sources for moment selection:**
+- **JSON3 transcript**: Word-level timing + confidence scores
+  - Low confidence words (< 0.5) = potential misspellings
+  - Word.start timestamps = precise moment timing
+- **scene_boundaries**: Av-scenechange detection data
+  - High inter_cost (> 30) = major visual shifts
+  - Scene transitions = topic changes or visual context
+
+**Moment selection criteria:**
+1. Proper nouns (names, brands, titles)
+2. Claims/statistics (numbers, prices, dates)
+3. Deictic references ("this", "that", "look at this")
+4. Topic transitions (use scene_boundaries)
+5. Key arguments (conclusions, controversial statements)
+6. Visual context (moments where visuals change interpretation)
+
+**Output**: 15-20 timestamps as comma-separated string
+
+### Language Detection
+
+Agent detects language via LLM from transcript (ISO 639-1 code).
+
+### Analysis
+
+Agent generates comprehensive analysis combining:
+- Transcript insights (JSON3 word-level data)
+- Scene context (av-scenechange boundaries)
+- Visual evidence (vision_analyze results)
 
 **Whisper fallback** — Binary calls Groq/OpenAI API only for audio transcription when subtitles unavailable. Requires `GROQ_API_KEY` or `OPENAI_API_KEY` in `~/.config/watch/.env`.
 
@@ -566,31 +810,76 @@ vision_analyze(frame_0021.jpg)  # End
 
 **If this happens again**: STOP. Extract more frames. Do NOT deliver analysis with <21 frames.
 
-### Don't Skip Agent-Side Moment Selection
+### Don't Skip Agent-Side Moment Selection (CRITICAL)
 
 **MISTAKE**: Running watch2 and only analyzing the uniform baseline frames without doing LLM-based moment selection. This misses key moments that need visual verification.
 
-**CORRECT**: After watch2 outputs report.json:
-1. Agent reads transcript + scene data
-2. Agent uses LLM to select key moments (proper nouns, claims, deictic references)
-3. Agent extracts frames at those timestamps
-4. Agent vision-analyzes all frames
-5. Agent cross-references transcript × scenes × vision
+**CORRECT workflow (transcript-first):**
+```
+Phase 1: watch2 --detail transcript (get JSON3 + scene data)
+Phase 2: Agent reads report.json → selects 15-20 key moments via LLM
+Phase 3: watch2 --timestamps "00:30,01:15,..." (extract at moments)
+Phase 4: vision_analyze all frames → cross-reference → analysis
+```
 
-**Why this matters**: Auto-captions (especially non-English) contain errors — misspelled proper nouns, garbled names, incorrect claims. The agent-side moment selection catches these by combining transcript intelligence with visual verification.
+**WHY THIS MATTERS:**
+
+1. **JSON3 word confidence**: Low confidence words (< 0.5) indicate potential ASR errors — these moments NEED visual verification
+2. **Scene boundary costs**: High-cost scene changes (> 30) indicate major visual shifts — these moments show new graphics/text/context
+3. **Uniform sampling misses key moments**: A 57-minute video with uniform sampling every ~153s will miss most proper nouns, claims, and topic transitions
+4. **LLM moment selection catches errors**: Auto-captions (especially non-English) contain misspelled proper nouns, garbled names, incorrect claims
+
+**DATA FLOW (serde serialization):**
+```
+Binary outputs report.json (serde):
+├── transcript[]: JSON3 segments with word-level timing
+│   └── words[].confidence: ASR confidence score (0-1)
+├── scene_boundaries[]: av-scenechange detection
+│   ├── start_sec, end_sec: timing
+│   ├── duration_sec: scene length
+│   └── inter_cost: scene change cost (>30 = major shift)
+└── metadata: title, uploader, duration, language
+
+Agent reads report.json → selects moments → passes timestamps to binary
+Binary extracts frames at LLM-selected timestamps → agent vision_analyzes
+```
 
 **When no subtitles are found**: watch2 will report the issue and suggest setting `GROQ_API_KEY` or `OPENAI_API_KEY` for Whisper fallback. Do NOT fall back to scene detection when captions exist but weren't detected.
 
-### Finding Top Moments in Transcript
+### Finding Top Moments in Transcript (JSON3 + Scene Data)
 
-After extracting the transcript (either from watch2 or manual JSON3 parsing), use `search_files` with regex to find the most dramatic/impactful moments:
+After extracting the transcript (from watch2 report.json), use JSON3 word-level data + scene boundaries to identify key moments:
 
+**Step 1: Extract transcript with word-level timing**
 ```bash
-search_files \
-  --pattern "70% chance|extinction|dictator|scary|chilling|lost.*million" \
-  --path /tmp/watch-XXX/transcript.txt \
-  --output-mode content \
-  --limit 60
+# Get JSON3 transcript segments
+rtk jq '.transcript[] | {start, end, text, words}' /tmp/watch-XXX/report.json
+
+# Get scene boundaries (av-scenechange data)
+rtk jq '.scene_boundaries[] | {start_sec, end_sec, duration_sec, inter_cost}' /tmp/watch-XXX/report.json
+```
+
+**Step 2: Identify moments using JSON3 confidence scores**
+```bash
+# Find low-confidence words (potential ASR errors)
+rtk jq '.transcript[].words[] | select(.confidence < 0.5) | {word, start, confidence}' /tmp/watch-XXX/report.json
+
+# Find high-cost scene changes (major visual shifts)
+rtk jq '.scene_boundaries[] | select(.inter_cost > 30) | {start_sec, end_sec, inter_cost}' /tmp/watch-XXX/report.json
+```
+
+**Step 3: Agent selects 15-20 key moments via LLM**
+- Use MOMENT_SELECTION_PROMPT template
+- Include JSON3 transcript sample + scene_boundaries sample
+- Select moments based on:
+  - Low confidence words (potential misspellings)
+  - High-cost scene changes (visual transitions)
+  - Proper nouns, claims, deictic references
+  - Topic transitions (scene changes)
+
+**Step 4: Extract frames at selected timestamps**
+```bash
+watch2 "URL" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/watch-XXX
 ```
 
 Cross-reference with frame timestamps to confirm visual context, then compile top 10-15 moments as a table with: `# | Timestamp | Topic | Quote`.
