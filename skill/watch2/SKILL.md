@@ -43,6 +43,7 @@ Rust-powered video analysis. Faster startup (~5ms), smaller memory (~5-15MB), si
 **Flags:** --timestamps, --keep-video, --out-dir, --output, --resolution
 **Minimum frames:** ≥21 (MANDATORY)
 **Transcript required:** Yes — binary exits without it
+**Frame analysis:** Analyze EVERY extracted frame with vision_analyze. NEVER skip frames.
 
 **Use when:** User shares video URL or local path, asks about video content
 **Don't use when:** Download only (yt-dlp), Edit video (ffmpeg), Audio only (whisper)
@@ -77,6 +78,8 @@ The user wants to understand what the video is about. Deliver comprehensive anal
 - Analysis is comprehensive (key findings + main arguments + conclusions)
 - All cross-references incorporated naturally into summary
 - No process artifacts leak into output text
+
+**Frame analysis rule:** After extracting frames, analyze EVERY frame with vision_analyze. Minimum 21 frames. NEVER skip frames to "save API calls" — fewer frames = blind spots in visual analysis.
 
 ## Output Template
 
