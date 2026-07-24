@@ -34,13 +34,13 @@ ls "$OUTDIR/download/"*.json3 "$OUTDIR/download/"*.vtt 2>/dev/null
 **If ffprobe shows valid duration but watch2 reports 0:** This is a bug in `frames/metadata.rs`. Report it on GitHub. However, manual ffmpeg extraction IS acceptable as a workaround when:
 1. ffprobe confirms valid duration
 2. The video file exists and is not corrupt
-3. You extract frames at specific timestamps from `key_moments.json`
+3. You extract frames at specific timestamps from agent-selected moments
 
 **Manual extraction workaround (when duration bug blocks watch2):**
 ```bash
-# Build a batch extraction script from key_moments.json
+# Build a batch extraction script from agent-selected timestamps
 # Convert timestamps to seconds, extract one frame per moment
-for each moment in key_moments.json:
+for each moment in agent_selected_timestamps:
   ffmpeg -y -ss <seconds> -i video.mp4 -frames:v 1 -q:v 2 frames/frame_NNNN.jpg
 ```
 This produces equivalent output to watch2's timestamp extraction mode. Always verify frame count ≥21 after extraction.
@@ -52,7 +52,7 @@ This produces equivalent output to watch2's timestamp extraction mode. Always ve
 **Language detection chain:**
 1. Quick metadata call: `yt-dlp --skip-download --write-info-json --print language`
 2. If language detected → download only matching subs (e.g., `id.*`)
-3. If detection fails → fallback to downloading all languages (`".*"` )
+3. If detection fails → fallback to downloading all languages (`".*"`)
 
 **Why targeted download:**
 - YouTube rate-limits English auto-captions for non-English videos (HTTP 429)
@@ -93,8 +93,11 @@ watch2 "URL" --out-dir /tmp/watch-XXX --output both
 
 **Pattern:**
 ```bash
-# Run watch2
+# Run watch2 Pass 1 (transcript + scene data, no frames)
 watch2 "https://youtu.be/abc" --out-dir /tmp/watch-XXX --output both
+
+# Agent reads report.json, selects moments, runs Pass 2
+watch2 "https://youtu.be/abc" --timestamps "00:30,01:15,..." --keep-video --out-dir /tmp/watch-XXX
 
 # Analyze 21+ frames (MINIMUM — see Frame Count Verification Gate)
 vision_analyze(frame_0001.jpg)  # First frame
@@ -117,8 +120,8 @@ vision_analyze(frame_0021.jpg)  # End
 3. Agent "saves cost" by analyzing only a subset → shallow analysis
 
 **Prevention**:
-- After ANY frame extraction (watch2 automatic OR manual ffmpeg), **VERIFY count ≥21** before proceeding
-- If <21: calculate fps = duration / 21, extract uniform, re-count
+- After ANY frame extraction (watch2 --timestamps OR manual ffmpeg), **VERIFY count ≥21** before proceeding
+- If <21: add more timestamps from scene boundaries, re-extract
 - Never "sample strategically" below 21 — that's a cost-optimization shortcut that sacrifices accuracy
 - See: [[Frame Count Verification Gate]] section above
 
@@ -126,13 +129,13 @@ vision_analyze(frame_0021.jpg)  # End
 
 ### Don't Skip Agent-Side Moment Selection (CRITICAL)
 
-**MISTAKE**: Running watch2 and only analyzing the uniform baseline frames without doing LLM-based moment selection. This misses key moments that need visual verification.
+**MISTAKE**: Running watch2 Pass 1 and analyzing only the transcript without selecting key moments for visual verification.
 
 **CORRECT workflow:**
 ```
-Step 1: watch2 (single pass — gets transcript + scene data + uniform frames)
-Step 2: Agent reads report.json → selects 21-25 key moments via LLM
-Step 3: watch2 --timestamps "00:30,01:15,..." --keep-video (extract at moments)
+Pass 1: watch2 (gets transcript + scene data, NO frames)
+Step 2: Agent reads report.json via jq → selects 21-25 key moments via LLM
+Pass 3: watch2 --timestamps "00:30,01:15,..." --keep-video (extract at moments)
 Step 4: vision_analyze all frames → cross-reference → analysis
 ```
 
@@ -140,7 +143,7 @@ Step 4: vision_analyze all frames → cross-reference → analysis
 
 1. **JSON3 word confidence**: Low confidence words (< 0.5) indicate potential ASR errors — these moments NEED visual verification
 2. **Scene boundary costs**: High-cost scene changes (> 30) indicate major visual shifts — these moments show new graphics/text/context
-3. **Uniform sampling misses key moments**: A 57-minute video with uniform sampling every ~153s will miss most proper nouns, claims, and topic transitions
+3. **Agent-selected moments are targeted**: A 57-minute video with random sampling will miss most proper nouns, claims, and topic transitions
 4. **LLM moment selection catches errors**: Auto-captions (especially non-English) contain misspelled proper nouns, garbled names, incorrect claims
 
 **DATA FLOW (serde serialization):**
@@ -154,8 +157,8 @@ Binary outputs report.json (serde):
 │   └── inter_cost: scene change cost (>30 = major shift)
 └── metadata: title, uploader, duration, language
 
-Agent reads report.json → selects moments → passes timestamps to binary
-Binary extracts frames at LLM-selected timestamps → agent vision_analyzes
+Agent reads report.json via jq → selects moments → passes timestamps to binary
+Binary extracts frames at agent-selected timestamps → agent vision_analyzes
 ```
 
 **When no subtitles are found**: watch2 will report the issue and suggest setting `GROQ_API_KEY` or `OPENAI_API_KEY` for Whisper fallback. Do NOT fall back to scene detection when captions exist but weren't detected.
@@ -167,19 +170,19 @@ After extracting the transcript (from watch2 report.json), use JSON3 word-level 
 **Step 1: Extract transcript with word-level timing**
 ```bash
 # Get JSON3 transcript segments
-rtk jq '.transcript[] | {start, end, text, words}' /tmp/watch-XXX/report.json
+jq '.transcript[] | {start, end, text, words}' /tmp/watch-XXX/report.json
 
 # Get scene boundaries (av-scenechange data)
-rtk jq '.scene_boundaries[] | {start_sec, end_sec, duration_sec, inter_cost}' /tmp/watch-XXX/report.json
+jq '.scene_boundaries[] | {start_sec, end_sec, duration_sec, inter_cost}' /tmp/watch-XXX/report.json
 ```
 
 **Step 2: Identify moments using JSON3 confidence scores**
 ```bash
 # Find low-confidence words (potential ASR errors)
-rtk jq '.transcript[].words[] | select(.confidence < 0.5) | {word, start, confidence}' /tmp/watch-XXX/report.json
+jq '.transcript[].words[] | select(.confidence < 0.5) | {word, start, confidence}' /tmp/watch-XXX/report.json
 
 # Find high-cost scene changes (major visual shifts)
-rtk jq '.scene_boundaries[] | select(.inter_cost > 30) | {start_sec, end_sec, inter_cost}' /tmp/watch-XXX/report.json
+jq '.scene_boundaries[] | select(.inter_cost > 30) | {start_sec, end_sec, inter_cost}' /tmp/watch-XXX/report.json
 ```
 
 **Step 3: Agent selects 21-25 key moments via LLM**
@@ -202,7 +205,7 @@ Cross-reference with frame timestamps to confirm visual context, then compile to
 
 When av-scenechange library API fails (VariableFormat, VariableFramerate, unsupported codec), the binary gracefully falls back to ffmpeg scene detection with adaptive thresholds. Warning is printed but no crash.
 
-**Fallback behavior:** No scoring data available in fallback mode (ffmpeg scene detection doesn't provide scores). Frame selection falls back to uniform sampling.
+**Fallback behavior:** No scoring data available in fallback mode (ffmpeg scene detection doesn't provide scores). Agent should select more moments to ensure ≥21 frames.
 
 ### CJK/Unicode Character Safety
 
@@ -248,13 +251,13 @@ String truncation uses `chars().take(N)` instead of byte slicing (`[..N]`). Mult
 **Why it's wrong**:
 1. `report.json` from the Rust binary already contains ALL structured data (frames, key_moments, stats)
 2. Writing intermediate files wastes tokens and creates confusion about source of truth
-3. The Rust binary is pure Python-free — using Python to generate files defeats the purpose
+3. The Rust binary is Python-free — using Python to generate files defeats the purpose
 
 **CORRECT workflow** (two-pass):
 ```
-Binary (pass 1): watch2 "URL" → report.json (transcript + scenes + uniform frames)
-Agent: reads report.json → selects 21-25 key moments via LLM
-Binary (pass 2): watch2 "URL" --timestamps "..." → extracts frames at key moments
+Pass 1: watch2 "URL" → report.json (transcript + scenes, NO frames)
+Agent: reads report.json via jq → selects 21-25 key moments via LLM
+Pass 2: watch2 "URL" --timestamps "..." → extracts frames at key moments
 Agent: vision_analyze all frames → cross-reference → summary
 ```
 
@@ -277,3 +280,33 @@ ls /tmp/watch-XXX/frames/ | sort
 ```
 Then use the exact filenames in `vision_analyze` calls. Don't construct filenames from memory.
 
+### Report Parsing: Use jq, Never Python (v8.0.0+)
+
+**MISTAKE**: Using `python3 -c "import json; ..."` to parse report.json.
+
+**Why it's wrong**:
+1. watch2 is a pure Rust pipeline — Python is not required
+2. `jq` is faster (no Python startup overhead)
+3. Violates the "NEVER use Python" rule in SKILL.md
+
+**CORRECT:**
+```bash
+# Metadata
+jq '{title, uploader, language, duration, engine, scene_count}' /tmp/watch-XXX/report.json
+
+# Frame list
+jq '.frames[] | {path, timestamp, reason}' /tmp/watch-XXX/report.json
+
+# Transcript
+jq -r '.transcript[] | "[\(.start) → \(.end)] \(.text)"' /tmp/watch-XXX/report.json
+
+# Scene boundaries
+jq '.scene_boundaries[] | {start_sec, end_sec, duration_sec}' /tmp/watch-XXX/report.json
+```
+
+**WRONG:**
+```bash
+python3 -c "import json; d=json.load(open('report.json')); print(d['title'])"
+```
+
+**If you catch yourself typing `python3 -c` during watch2 analysis — STOP. Use `jq` instead.**

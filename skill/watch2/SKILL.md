@@ -1,6 +1,6 @@
 ---
 name: watch2
-version: "7.2.0"
+version: "8.0.0"
 description: "Rust-powered video analysis for AI agents — transcript-first with scene detection"
 argument-hint: " <url-or-path> [question]"
 allowed-tools: Bash, Read, AskUserQuestion
@@ -39,11 +39,12 @@ Rust-powered video analysis. Faster startup (~5ms), smaller memory (~5-15MB), si
 ## Quick Reference
 
 **Binary:** `watch2 "URL" --out-dir /tmp/watch-XXX --output both`
-**Flow:** Run binary → Read report.json → Select moments → --timestamps → Vision analyze → Analysis
+**Flow:** Run binary (no frames) → Read report.json with jq → Agent selects moments → watch2 --timestamps → Vision analyze → Analysis
 **Flags:** --timestamps, --keep-video, --out-dir, --output, --resolution
 **Minimum frames:** ≥21 (MANDATORY)
 **Transcript required:** Yes — binary exits without it
 **Frame analysis:** Analyze EVERY extracted frame with vision_analyze. NEVER skip frames.
+**Report parsing:** Use `jq` — NEVER Python (`python3`, `execute_code`).
 
 **Use when:** User shares video URL or local path, asks about video content
 **Don't use when:** Download only (yt-dlp), Edit video (ffmpeg), Audio only (whisper)
@@ -70,9 +71,9 @@ The user wants to understand what the video is about. Deliver comprehensive anal
 
 **DON'T:** Show work process. No cross-reference tables, no correction sections, no frame-by-frame notes.
 
-**Data flow:** `binary → report.json → agent reads transcript+scenes → agent selects moments → agent calls watch2 --timestamps → binary extracts frames → agent vision_analyze → cross-reference → summary`
+**Data flow:** `binary → report.json → agent reads transcript+scenes via jq → agent selects moments → agent calls watch2 --timestamps → binary extracts frames → agent vision_analyze → cross-reference → summary`
 
-**NEVER use `execute_code` or Python scripts** during watch2 analysis.
+**NEVER use `python3`, `execute_code`, or Python scripts** during watch2 analysis. This is a pure Rust pipeline — use `jq` for all JSON parsing.
 
 **STOP when:**
 - Analysis is comprehensive (key findings + main arguments + conclusions)
@@ -80,6 +81,35 @@ The user wants to understand what the video is about. Deliver comprehensive anal
 - No process artifacts leak into output text
 
 **Frame analysis rule:** After extracting frames, analyze EVERY frame with vision_analyze. Minimum 21 frames. NEVER skip frames to "save API calls" — fewer frames = blind spots in visual analysis.
+
+## Report Parsing (MANDATORY)
+
+Parse `report.json` with `jq`. NEVER use Python.
+
+### Metadata
+```bash
+jq '{title, uploader, language, duration, engine, scene_count}' /tmp/watch-XXX/report.json
+```
+
+### Frame list
+```bash
+jq '.frames[] | {path, timestamp, reason}' /tmp/watch-XXX/report.json
+```
+
+### Transcript
+```bash
+jq -r '.transcript[] | "[\(.start) → \(.end)] \(.text)"' /tmp/watch-XXX/report.json
+```
+
+### Scene boundaries
+```bash
+jq '.scene_boundaries[] | {start_sec, end_sec, duration_sec}' /tmp/watch-XXX/report.json
+```
+
+### Key moments (if available)
+```bash
+jq '.key_moments[] | {timestamp, reason, question}' /tmp/watch-XXX/report.json
+```
 
 ## Output Template
 
@@ -129,6 +159,11 @@ When watch2 fails:
 2. Using `ls` to verify subtitle files exist (diagnostic)
 3. Using `ffmpeg` to extract frames at specific timestamps when duration detection fails (workaround)
 
+**NEVER acceptable:**
+- `python3 -c "..."` for JSON parsing (use `jq`)
+- `execute_code` for report extraction (use `jq`)
+- Any Python script for any part of the pipeline
+
 ## Binary
 
 ```bash
@@ -145,26 +180,31 @@ which av-scenechange || echo "Install: cargo install av-scenechange --features f
 | `ffmpeg` | Frame extraction, video processing | ✅ |
 | `ffprobe` | Video metadata | ✅ |
 | `yt-dlp` | Video download | ✅ (URLs) |
+| `jq` | JSON parsing (report.json) | ✅ |
 
 ## Quick Start
 
 **Recommended workflow (two passes):**
 
 ```bash
-# Pass 1: Get report.json (uniform frames + transcript + scene data)
+# Pass 1: Get transcript + scene data (NO frames extracted)
 watch2 "https://youtu.be/abc" --out-dir /tmp/watch-XXX --output both
 
-# Pass 2: After agent selects key moments via LLM
+# Read report with jq
+jq '{title, uploader, duration, scene_count}' /tmp/watch-XXX/report.json
+jq -r '.transcript[] | "[\(.start) → \(.end)] \(.text)"' /tmp/watch-XXX/report.json
+
+# Pass 2: After agent selects 21-25 key moments
 watch2 "https://youtu.be/abc" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/watch-XXX
 ```
 
 **Steps:**
-1. Run binary → get report.json (21 uniform frames + transcript + scene boundaries)
-2. Agent reads report.json, selects 21-25 key moments using transcript + scene data
+1. Run binary → get report.json (transcript + scene boundaries, NO frames)
+2. Agent reads report.json via jq, selects 21-25 key moments using transcript + scene data
 3. Run binary again with `--timestamps` → extract frames at key moments
 4. Vision analyze ALL extracted frames (minimum 21)
 
-**Why two passes?** Uniform frames are sampling. Agent-selected moments are targeted — at speaker transitions, topic changes, visual demonstrations.
+**Why two passes?** Pass 1 provides transcript + scene data for intelligent moment selection. Pass 2 extracts frames only at agent-selected moments — targeted at speaker transitions, topic changes, visual demonstrations. No wasted frames.
 
 ## CLI Options
 
@@ -179,7 +219,7 @@ watch2 "https://youtu.be/abc" --timestamps "00:30,01:15,02:45,..." --keep-video 
 | `--output fmt` | markdown/json/both | markdown |
 | `--no-cache` | Disable cache | false |
 | `--cache-dir DIR` | Cache directory | `~/.cache/watch2` |
-| `--timestamps T` | Comma-separated MM:SS | none |
+| `--timestamps T` | Comma-separated MM:SS | none (no frames) |
 
 ## Output Formats
 
@@ -189,7 +229,7 @@ watch2 "https://youtu.be/abc" --timestamps "00:30,01:15,02:45,..." --keep-video 
 | JSON | `watch2 URL question --output json` | Programmatic processing |
 | Both | `watch2 URL question --output both` | Agent + file storage |
 
-The `WatchReport` includes: video metadata, extracted frames with timestamps, full transcript with word-level timing, scene boundaries, key moment metadata, and warnings.
+The `WatchReport` includes: video metadata, full transcript with word-level timing, scene boundaries, key moment metadata, and warnings. Frames are only present when `--timestamps` is provided.
 
 ## Configuration
 

@@ -8,5 +8,4 @@
 - Scene boundaries help agent identify topic transitions for moment selection
 - Fallback: ffmpeg scene detection (stub — currently disabled)
 
-**Note**: Scene detection does NOT control frame extraction. Frames are always uniform or agent-provided timestamps.
-
+**Note**: Scene detection does NOT control frame extraction. Frames are only extracted when agent provides timestamps via --timestamps flag (Pass 2).

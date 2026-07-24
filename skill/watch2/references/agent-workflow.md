@@ -8,14 +8,13 @@ The binary runs a **single-pass pipeline**:
 3. Whisper fallback (if no captions + API key)
 4. Bail if no transcript available
 5. Scene detection (metadata in report.json)
-6. Extract frames (uniform or --timestamps)
-7. Build report.json
-8. Cleanup
+6. Build report.json (transcript + scene boundaries, NO frames)
+7. Cleanup
 
-**Agent reads report.json, then:**
+**Agent reads report.json via jq, then:**
 - Detects language from transcript
 - Selects 21-25 key moments using transcript + scene data
-- Extracts frames at those timestamps via --timestamps flag
+- Extracts frames at those timestamps via --timestamps flag (Pass 2)
 - Vision analyzes all frames
 - Cross-references transcript × visuals
 - Generates comprehensive analysis
@@ -24,41 +23,41 @@ The binary runs a **single-pass pipeline**:
 
 ```
 Has transcript (JSON3/VTT)?
-├── YES → Run binary → Agent reads report.json → selects moments → --timestamps extraction
+├── YES → Pass 1: Run binary → Agent reads report.json via jq → selects moments → Pass 2: --timestamps extraction
 └── NO  → Whisper fallback (if API key) → If still no transcript → binary exits with error
 ```
 
 **Note**: The binary REQUIRES a transcript. It cannot analyze video without captions or Whisper. This is by design — transcript-first ensures accurate analysis.
 
-### Step 1: Run binary (single pass)
+### Pass 1: Get Transcript + Scene Data (NO frames)
 ```bash
-# Default: extracts uniform frames (21 frames) + transcript + scene data
+# Pass 1: transcript + scene boundaries only (no frames extracted)
 watch2 "URL" --out-dir /tmp/watch-XXX --output both
 
-# Or with agent-selected timestamps (skip uniform, extract at specific moments)
-# First run: get transcript data, then agent selects moments, then:
-watch2 "URL" --timestamps "00:30,01:15,02:45,..." --out-dir /tmp/watch-XXX --output both
+# Read metadata with jq
+jq '{title, uploader, duration, language, engine, scene_count}' /tmp/watch-XXX/report.json
+
+# Get transcript with word-level timing
+jq -r '.transcript[] | "[\(.start) → \(.end)] \(.text)"' /tmp/watch-XXX/report.json
+
+# Get scene boundaries
+jq '.scene_boundaries[] | {start_sec, end_sec, duration_sec}' /tmp/watch-XXX/report.json
 ```
 - Downloads video + subtitles (with retry, cache)
 - Parses transcript (JSON3/VTT)
 - Runs scene detection (av-scenechange) → scene_boundaries in report.json
-- Extracts frames (uniform or at --timestamps)
-- Outputs `report.json` with transcript + scene_boundaries + frames
+- **NO frames extracted** — agent must select moments first
 
-### Step 2: Read report.json
+### Pass 2: Extract Frames at Agent-Selected Timestamps
 ```bash
-# Get transcript with word-level timing
-rtk jq '.transcript[] | {start, end, text, words}' /tmp/watch-XXX/report.json
+# Pass 2: extract frames at agent-selected timestamps
+watch2 "URL" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/watch-XXX
 
-# Get scene boundaries
-rtk jq '.scene_boundaries[] | {start_sec, end_sec, duration_sec}' /tmp/watch-XXX/report.json
-
-# Get metadata
-rtk jq '{title, uploader, duration, language, engine, scene_count}' /tmp/watch-XXX/report.json
-
-# Get frame list
-rtk jq '.frames[] | {path, timestamp, reason}' /tmp/watch-XXX/report.json
+# Verify frames extracted
+ls /tmp/watch-XXX/frames/*.jpg | wc -l
 ```
+- Binary extracts frames ONLY at these timestamps
+- Each frame gets `reason: "transcript-cue"` metadata
 
 ### Step 3: LLM Detect Language (ISO 639-1 code)
 - Read transcript text
@@ -68,7 +67,7 @@ rtk jq '.frames[] | {path, timestamp, reason}' /tmp/watch-XXX/report.json
 
 Agent selects 21-25 key moments using this data:
 
-```python
+```bash
 # Moment Selection Prompt Template
 MOMENT_SELECTION_PROMPT = """
 You are analyzing a video transcript + scene changes to identify key moments for visual verification.
@@ -100,7 +99,7 @@ MOMENT SELECTION CRITERIA:
 
 OUTPUT FORMAT: Return ONLY a JSON array of moments:
 [
-  {{
+  {
     "timestamp": 54.0,
     "timestamp_fmt": "0:54",
     "word": "Ragnarok",
@@ -108,7 +107,7 @@ OUTPUT FORMAT: Return ONLY a JSON array of moments:
     "reason": "proper_noun",
     "question": "What game name is displayed on screen?",
     "priority": 1
-  }}
+  }
 ]
 
 RULES:
@@ -120,6 +119,7 @@ timestamp_fmt: MM:SS string (agent MUST provide)
 - priority: 1 (critical) to 5 (nice-to-have)
 - Spread moments evenly across FULL duration
 - Include moments from beginning, middle, AND end
+- MINIMUM 21 moments required
 """
 ```
 

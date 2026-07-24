@@ -43,37 +43,36 @@ yt-dlp --write-sub --write-auto-sub --sub-lang "id-orig,id,en" \
 echo "Downloaded subtitle files:"
 ls -la "$WORKDIR/download/"*.json3 2>/dev/null || echo "No subtitle files found"
 
-# 4. Parse transcript from JSON3
+# 4. Parse transcript from JSON3 (using jq — no Python)
 echo ""
 echo "--- Parsing Transcript ---"
-python3 << PYEOF
-import json, glob, os
-outdir = "$WORKDIR"
-files = sorted(glob.glob(f"{outdir}/download/video.*.json3"))
-# Prefer *-orig.json3 (manual/accurate), then any available
-json3 = next((f for f in files if "orig" in f), files[0] if files else None)
-if not json3:
-    print("WARNING: No JSON3 subtitle files found")
-    print("Falling back to English auto-captions...")
-    # Try English as last resort
-    json3 = next((f for f in files if ".en." in f), None)
-if not json3:
-    raise SystemExit("No usable subtitle files found")
-print(f"Using: {json3}")
-with open(json3) as f:
-    data = json.load(f)
-lines = []
-for event in data.get("events", []):
-    if "segs" in event:
-        text = "".join(s.get("utf8","") for s in event["segs"] if "utf8" in s).strip()
-        if text:
-            t = event["tStartMs"] // 1000
-            lines.append(f"[{t//60:02d}:{t%60:02d}] {text}")
-outpath = f"{outdir}/transcript.txt"
-with open(outpath, "w") as f:
-    f.write("\n".join(lines))
-print(f"Transcript: {len(lines)} lines → {outpath}")
-PYEOF
+JSON3_FILE=$(ls "$WORKDIR/download/"*orig*.json3 2>/dev/null | head -1 || \
+             ls "$WORKDIR/download/"*.json3 2>/dev/null | head -1 || echo "")
+
+if [ -z "$JSON3_FILE" ]; then
+  echo "WARNING: No JSON3 subtitle files found"
+  echo "Trying English auto-captions..."
+  JSON3_FILE=$(ls "$WORKDIR/download/"*.en.*.json3 2>/dev/null | head -1 || echo "")
+fi
+
+if [ -z "$JSON3_FILE" ]; then
+  echo "ERROR: No usable subtitle files found"
+  exit 1
+fi
+
+echo "Using: $JSON3_FILE"
+
+# Parse JSON3 with jq — extract timestamps and text
+jq -r '.events[] | 
+  select(.segs != null) | 
+  (.tStartMs / 1000 | floor) as $t |
+  (.segs | map(.utf8 // "") | join("")) as $text |
+  select($text != "") |
+  "[\($t / 60 | floor | tostring | if length < 2 then "0" + . else . end):\($t % 60 | floor | tostring | if length < 2 then "0" + . else . end)] \($text)"
+' "$JSON3_FILE" > "$WORKDIR/transcript.txt"
+
+LINE_COUNT=$(wc -l < "$WORKDIR/transcript.txt")
+echo "Transcript: $LINE_COUNT lines → $WORKDIR/transcript.txt"
 
 # 5. Download video (720p max)
 echo ""
@@ -139,7 +138,7 @@ echo "3. Analyze representative frames with vision_analyze"
 | Feature | watch2 | Manual Pipeline |
 |---------|--------|-----------------|
 | API keys required | Yes (GROQ/OPENAI) | No |
-| Transcript parsing | Automatic | Manual (JSON3) |
+| Transcript parsing | Automatic | Manual (jq) |
 | Frame extraction | Automatic | Manual (ffmpeg) |
 | Moment detection | LLM-driven | Agent-driven |
 | `moments_prompt.txt` | Generated | Not generated |
