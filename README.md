@@ -1,50 +1,61 @@
-# watch2
+# watch2 — Video Analysis for AI Agents
 
 > **It watches. It listens. It verifies.**
-> Rust-powered video analysis that *sees* frames and *reads* transcripts — then cross-references both to catch what either one misses.
+> Rust-powered video analysis skill for Hermes Agent — transcript-first with scene detection. Cross-references frames against captions to catch what either one misses.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-2024+-orange.svg)](https://www.rust-lang.org/)
 [![Hermes Agent](https://img.shields.io/badge/Hermes-Agent-purple)](https://hermes-agent.nousresearch.com)
 [![GitHub stars](https://img.shields.io/github/stars/m1crodevil/hermes-video-rs)](https://github.com/m1crodevil/hermes-video-rs/stargazers)
+[![Version](https://img.shields.io/badge/version-7.2.0-blue.svg)](https://github.com/m1crodevil/hermes-video-rs/releases)
 
-**Rust rewrite of [hermes-video](https://github.com/m1crodevil/hermes-video)** — same features, 100× faster startup, single binary.
+**Works with:** Hermes Agent · Claude Code · Codex · Any AI agent that reads files
 
-Paste a URL or a local path. Hermes fetches captions, downloads the video, detects scene changes, extracts frames at the moments that matter, and cross-references the transcript against what's actually on screen. Auto-captions misspell names? It catches that. A claim doesn't match the visual? It flags that.
-
-```bash
-hermes skill install watch2
-```
+Paste a URL or a local path. Hermes fetches captions, downloads the video, detects scene changes, extracts frames at key moments, and cross-references the transcript against what's actually on screen. Auto-captions misspell names? It catches that. A claim doesn't match the visual? It flags that.
 
 Zero config to start. `yt-dlp`, `ffmpeg`, and `av-scenechange` are the only runtime dependencies. Captions cover most public videos for free. Whisper API key is only needed when a video has no captions.
 
 ---
 
-## Why Rust?
+## Quick Install
 
-| | Python (hermes-video) | Rust (hermes-video-rs) |
-|---|---|---|
-| **Startup** | ~500ms (Python import) | ~5ms |
-| **Memory** | ~50-100MB | ~5-15MB |
-| **Binary** | 0 (needs Python runtime) | ~6MB self-contained |
-| **Install** | pip + yt-dlp + ffmpeg | Single binary + yt-dlp + ffmpeg + av-scenechange |
-| **Tests** | 1,379 LOC | 5,311 LOC (170 passing) |
+**Hermes Agent (recommended):**
+```bash
+hermes skill install watch2
+```
+
+**From source:**
+```bash
+git clone https://github.com/m1crodevil/hermes-video-rs && cd hermes-video-rs
+cargo build --release
+sudo cp target/release/watch2 /usr/local/bin/
+```
+
+**Runtime dependencies:** `yt-dlp`, `ffmpeg`, `ffprobe`, `av-scenechange`
 
 ---
 
-## Use Cases
+## What People Use It For
 
-**Analyze someone else's content.** `watch2 https://youtu.be/ what hook did they open with?` Hermes looks at the first frames, reads the opening transcript, breaks down the structure.
+**Analyze someone else's content.**
+```bash
+watch2 https://youtu.be/ what hook did they open with?
+```
 
-**Diagnose a bug from a video.** `watch2 bug-repro.mov what's going wrong?` Hermes watches the recording, finds the frame where the issue appears, describes what's on screen.
+**Diagnose a bug from a video.**
+```bash
+watch2 bug-repro.mov what's going wrong?
+```
 
-**Summarize a video.** `watch2 https://youtu.be/ summarize this` pulls the structure, the key moments, what was actually said and shown. Faster than watching at 2×.
+**Summarize a video.**
+```bash
+watch2 https://youtu.be/ summarize this
+```
 
-**Cut the hype out of an update video.** `watch2 https://youtu.be/ what's actually new --skip-the-hype`
-
-**Catch what captions get wrong.** The binary outputs the transcript with word-level timing; the agent selects key moments via LLM, extracts frames at those timestamps, and cross-references the transcript against what's actually on screen.
-
-**Verify transcript accuracy with visual evidence.** The agent identifies moments in the transcript that need visual verification (proper nouns, game names, claims, deictic references) via LLM selection, extracts frames at those timestamps, and validates the transcript against what's actually shown.
+**Catch what captions get wrong.**
+```bash
+watch2 https://youtu.be/ are any names or terms misspelled in the captions?
+```
 
 ---
 
@@ -65,31 +76,42 @@ Video URL / local path
     ↓
 5. Scene detection via av-scenechange
     ↓
-6. Agent reads report.json → selects key moments via LLM → extracts frames at those timestamps
+6. Agent reads report.json → selects key moments via LLM → extracts frames
     ↓
 7. Cleanup video file (save disk space)
     ↓
 8. Build WatchReport (markdown/JSON)
 ```
 
-### Single-Run Design
-
-watch2 runs everything in one pass — no re-running, no intermediate files:
-
-1. Detects language via quick metadata call (~1 sec)
-2. Downloads the video and targeted subtitles (1-2 requests instead of 157)
-3. Parses the transcript from the best-matching language
-4. Runs scene detection
-5. Outputs report.json with transcript, scene boundaries, and metadata
-6. Agent reads report.json → selects key moments via LLM → extracts frames at those timestamps
-7. Builds a `WatchReport` with frames, transcript, scene boundaries, and key moment metadata
-7. Cleans up the video file
-
 The binary handles data extraction only. All intelligence (LLM calls, moment selection, analysis) is handled by the agent. No `moments_prompt.txt`, no `key_moments.json` — the agent reads `report.json` and decides what to analyze.
+
+### Cross-Reference Methodology
+
+Every vision finding is classified:
+- ✅ **confirmed** — vision matches transcript
+- 🔧 **corrected** — vision shows different spelling/entity
+- ❓ **fabrication** — claim has no visual evidence
+- ⚠️ **unverified** — cannot determine from visual alone
+- 🔸 **partial** — partially shown on screen
 
 ---
 
-## Usage
+## Key Features
+
+| Feature | Detail |
+|---------|--------|
+| Transcript-first | JSON3 captions with word-level timing |
+| Scene detection | av-scenechange for visual boundaries |
+| Cross-reference | Frames vs transcript — catches misspellings, fabrications |
+| Single binary | ~6MB, zero config, 5ms cold start |
+| Agent-native | Outputs report.json, agent handles intelligence |
+| Multi-platform | YouTube, TikTok, Vimeo, local files, any URL yt-dlp supports |
+| Cache-aware | SHA256 dedup, skip re-downloads |
+| Whisper fallback | Groq ($0.004/min) or OpenAI — only when no captions |
+
+---
+
+## CLI Reference
 
 ```bash
 # Basic usage
@@ -98,8 +120,6 @@ watch2 https://www.tiktok.com/@user/video/123 summarize this
 watch2 ~/Movies/screen-recording.mp4 when does the UI break?
 watch2 https://vimeo.com/123 what tools does she mention?
 ```
-
-### CLI Flags
 
 | Flag | Description | Default |
 |------|-------------|---------|
@@ -118,51 +138,17 @@ watch2 https://vimeo.com/123 what tools does she mention?
 
 ## Output Formats
 
-**Markdown** (default):
-```
-watch2 https://youtu.be/abc summarize this
-```
+| Format | Command | Use When |
+|--------|---------|----------|
+| Markdown (default) | `watch2 URL question` | Agent reads directly |
+| JSON | `watch2 URL question --output json` | Programmatic processing |
+| Both | `watch2 URL question --output both` | Agent + file storage |
 
-**JSON**:
-```
-watch2 https://youtu.be/abc --output json
-```
-
-**Both** (markdown to stdout, JSON written to `report.json`):
-```
-watch2 https://youtu.be/abc --output both
-```
-
-The `WatchReport` includes:
-- Video metadata (title, uploader, language, duration)
-- Extracted frames with timestamps and reasons
-- Full transcript with word-level timing (when available from JSON3 captions)
-- Scene boundaries from av-scenechange
-- Key moment metadata (LLM-selected moments with reasons)
-- Warnings for sparse coverage, missing transcript, etc.
+The `WatchReport` includes: video metadata, extracted frames with timestamps, full transcript with word-level timing (when available from JSON3 captions), scene boundaries from av-scenechange, key moment metadata (LLM-selected moments with reasons), and warnings for sparse coverage or missing transcript.
 
 ---
 
-## Installation
-
-**Hermes Agent (recommended):**
-```bash
-hermes skill install watch2
-```
-
-**From source:**
-```bash
-git clone https://github.com/m1crodevil/hermes-video-rs
-cd hermes-video-rs
-cargo build --release
-sudo cp target/release/watch2 /usr/local/bin/
-```
-
-**Runtime dependencies:** `yt-dlp`, `ffmpeg`, `ffprobe`, `av-scenechange`
-
----
-
-## API Keys
+## API Keys & Configuration
 
 Captions cover the majority of public videos for free. The Whisper fallback only kicks in when a video has no caption track.
 
@@ -174,27 +160,12 @@ Captions cover the majority of public videos for free. The Whisper fallback only
 | Whisper fallback (alt) | [OpenAI API key](https://platform.openai.com/api-keys) | Standard pricing |
 | Disable Whisper | `--no-whisper` | Free, frames-only |
 
----
-
-## Configuration
-
 Config file: `~/.config/watch/.env`
 
 ```bash
 GROQ_API_KEY=gsk_...        # Optional — for Whisper fallback
 OPENAI_API_KEY=sk-...        # Optional — alternative Whisper provider
 SETUP_COMPLETE=true
-```
-
-### API Key Behavior
-
-- **With API key**: Whisper fallback available for videos without subtitles
-- **Without API key**: Only works with videos that have auto/manual captions
-- **`--no-whisper`**: Suppresses the "no API key" warning, skips Whisper entirely
-
-When no subtitles are found and no API key is set:
-```
-⚠️  No subtitles found. Set GROQ_API_KEY or OPENAI_API_KEY.
 ```
 
 ---
@@ -229,6 +200,18 @@ watch2/
 
 ---
 
+## Why Rust?
+
+| | Python (hermes-video) | Rust (hermes-video-rs) |
+|---|---|---|
+| **Startup** | ~500ms (Python import) | ~5ms |
+| **Memory** | ~50-100MB | ~5-15MB |
+| **Binary** | 0 (needs Python runtime) | ~6MB self-contained |
+| **Install** | pip + yt-dlp + ffmpeg | Single binary + yt-dlp + ffmpeg + av-scenechange |
+| **Tests** | 1,379 LOC | 5,311 LOC (170 passing) |
+
+---
+
 ## Development
 
 ```bash
@@ -253,64 +236,12 @@ RUST_LOG=debug cargo run -- --help
 
 ---
 
-## Key Moments Pipeline
-
-The binary outputs structured data. The agent handles moment selection:
-
-```
-Video URL / local path
-    ↓
-Binary: Download + transcript + scene detection → report.json
-    ↓
-Agent: LLM selects key moments from transcript + scene data
-    ↓
-Binary: Frame extraction at selected timestamps → WatchReport
-    ↓
-Agent reads report, analyzes frames via vision (optional)
-```
-
-**Data flow**: `report.json` is the single source of truth. The Rust binary outputs structured data (transcript, scene boundaries, metadata); the agent reads it, selects key moments via LLM, and orchestrates frame extraction + vision analysis.
-
-**Cross-reference methodology**: Every vision finding is classified:
-- ✅ **confirmed** — vision matches transcript
-- 🔧 **corrected** — vision shows different spelling/entity
-- ❓ **fabrication** — claim has no visual evidence
-- ⚠️ **unverified** — cannot determine from visual alone
-- 🔸 **partial** — partially shown on screen
-
----
-
-## Dependencies
-
-Core:
-- `clap` 4 — CLI parsing
-- `tokio` 1 — async runtime
-- `serde` / `serde_json` 1 — serialization
-- `reqwest` 0.12 — HTTP client (Whisper API calls)
-- `anyhow` 1 / `thiserror` 2 — error handling
-- `av-scenechange` 0.24 — scene boundary detection
-- `async-openai` 0.41 — OpenAI Whisper API
-- `groq-api-rust` 0.3 — Groq Whisper API
-- `sha2` 0.10 — cache key hashing
-- `regex` 1 — transcript parsing
-- `dotenvy` 0.15 — .env config loading
-- `dirs` 6 — platform cache directories
-- `tracing` / `tracing-subscriber` — structured logging
-- `chrono` — timestamp handling
-- `which` — binary existence checks
-- `hex` — encoding utilities
-- `async-trait` — async trait support
-- `tempfile` — temporary file management
-
-Dev:
-- `assert_cmd` 2 / `predicates` 3 — CLI integration tests
-
----
-
 ## Related Projects
 
-- [bradautomates/claude-video](https://github.com/bradautomates/claude-video) — Original (7.6k stars)
-- [m1crodevil/hermes-video](https://github.com/m1crodevil/hermes-video) — Python version
+**Note:** This is a Rust rewrite of [hermes-video](https://github.com/m1crodevil/hermes-video) — same features, 100× faster startup, single binary.
+
+- [bradautomates/claude-video](https://github.com/bradautomates/claude-video) — Original inspiration (7.6k stars)
+- [m1crodevil/hermes-video](https://github.com/m1crodevil/hermes-video) — Python version (same features, slower startup)
 
 ---
 
