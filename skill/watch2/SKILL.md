@@ -44,7 +44,7 @@ The user wants to understand what the video is about. Your job is to deliver a c
 
 **DON'T**: Show your work process. No cross-reference tables, no correction sections, no frame-by-frame notes, no verification trails. The analytical rigor happens internally; the output is the result.
 
-**Data flow**: `report.json` → agent reads → `vision_analyze` → cross-reference in memory → summary in response. All analysis flows through your response text, never through intermediate files.
+**Data flow**: `binary → report.json → agent reads transcript+scenes → agent selects moments → agent calls watch2 --timestamps → binary extracts frames → agent vision_analyze → cross-reference → summary`. All analysis flows through your response text, never through intermediate files.
 
 **NEVER use `execute_code` or Python scripts** during watch2 analysis. The Rust binary is pure Python-free. Write findings in your response, not to JSON files.
 
@@ -62,7 +62,7 @@ The binary runs a **single-pass pipeline**:
 
 **Agent reads report.json, then:**
 - Detects language from transcript
-- Selects 15-20 key moments using transcript + scene data
+- Selects 21-25 key moments using transcript + scene data
 - Extracts frames at those timestamps via --timestamps flag
 - Vision analyzes all frames
 - Cross-references transcript × visuals
@@ -114,7 +114,7 @@ rtk jq '.frames[] | {path, timestamp, reason}' /tmp/watch-XXX/report.json
 
 ### Step 4: LLM Select Key Moments (using transcript + scene data)
 
-Agent selects 15-20 key moments using this data:
+Agent selects 21-25 key moments using this data:
 
 ```python
 # Moment Selection Prompt Template
@@ -134,7 +134,7 @@ TRANSCRIPT:
 SCENE BOUNDARIES:
 {scene_boundaries_sample}
 
-YOUR TASK: Select 15-20 key moments where visual verification would improve accuracy.
+YOUR TASK: Select 21-25 key moments where visual verification would improve accuracy.
 
 MOMENT SELECTION CRITERIA:
 1. **Proper nouns** — names, brands, titles that might be misspelled in auto-captions
@@ -143,6 +143,8 @@ MOMENT SELECTION CRITERIA:
 4. **Topic transitions** — moments where conversation shifts (use scene_boundaries)
 5. **Key arguments** — important conclusions or controversial statements
 6. **Visual context** — moments where understanding visuals changes interpretation
+7. **Speaker identity** — moments where speaker changes or identity matters (`speaker_id`)
+8. **Entity recognition** — brand names, product names, on-screen text (`entity`)
 
 OUTPUT FORMAT: Return ONLY a JSON array of moments:
 [
@@ -158,8 +160,10 @@ OUTPUT FORMAT: Return ONLY a JSON array of moments:
 ]
 
 RULES:
-- timestamp: f64 seconds (NOT MM:SS string)
-- timestamp_fmt: MM:SS string (agent MUST provide)
+timestamp: f64 seconds (NOT MM:SS string)
+timestamp_fmt: MM:SS string (agent MUST provide)
+- timestamp_fmt → pass to --timestamps flag (MM:SS format required by binary)
+- timestamp → internal reference only (do NOT pass to --timestamps)
 - reason: one of [proper_noun, claim, deictic, speaker_id, visual_context, entity, topic_transition, key_argument]
 - priority: 1 (critical) to 5 (nice-to-have)
 - Spread moments evenly across FULL duration
@@ -169,7 +173,7 @@ RULES:
 
 ### Step 5: Extract frames at moment timestamps
 ```bash
-# Pass selected timestamps to binary
+# Pass timestamp_fmt values (MM:SS) to --timestamps flag
 watch2 "URL" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/watch-XXX
 ```
 - Binary extracts frames ONLY at these timestamps
@@ -203,7 +207,7 @@ Always use this structure when delivering watch2 results:
 
 ```
 🎬 **[Video Title]**
-Channel: [Uploader] · Published: [date] | Duration: [time]
+Channel: [Uploader] · Duration: [time]
 
 ---
 
@@ -279,7 +283,7 @@ rtk jq '.frames[] | {path, timestamp, reason}' /tmp/watch-XXX/report.json
 # Step 1: Get transcript + scene data + uniform frames
 watch2 "https://youtu.be/abc" --out-dir /tmp/watch-XXX --output both
 
-# Step 2: Agent reads report.json, selects 15-20 key moments via LLM
+# Step 2: Agent reads report.json, selects 21-25 key moments via LLM
 
 # Step 3: Extract frames at selected timestamps
 watch2 "https://youtu.be/abc" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/watch-XXX
@@ -306,7 +310,7 @@ Video has captions (JSON3/VTT) or Whisper API key?
 │   │   (extracts transcript + scene_boundaries + uniform frames)
 │   ├── Step 2: Read report.json (transcript + scene_boundaries + frames)
 │   ├── Step 3: LLM detect language
-│   ├── Step 4: LLM select 15-20 key moments
+│   ├── Step 4: LLM select 21-25 key moments
 │   ├── Step 5: watch2 --timestamps "00:30,01:15,..." --keep-video --out-dir /tmp/watch-XXX
 │   ├── Step 6: vision_analyze all frames (≥21 minimum)
 │   ├── Step 7: Cross-reference transcript × scenes × vision
@@ -584,8 +588,10 @@ Agent selects key moments using transcript + scene data from report.json:
 4. Topic transitions (use scene_boundaries)
 5. Key arguments (conclusions, controversial statements)
 6. Visual context (moments where visuals change interpretation)
+7. Speaker identity (speaker changes, identity unclear from transcript)
+8. Entity recognition (brand names, product names, on-screen text)
 
-**Output**: 15-20 timestamps as comma-separated string
+**Output**: 21-25 timestamps as comma-separated string
 
 ### Language Detection
 
@@ -735,7 +741,7 @@ vision_analyze(frame_0021.jpg)  # End
 **CORRECT workflow:**
 ```
 Step 1: watch2 (single pass — gets transcript + scene data + uniform frames)
-Step 2: Agent reads report.json → selects 15-20 key moments via LLM
+Step 2: Agent reads report.json → selects 21-25 key moments via LLM
 Step 3: watch2 --timestamps "00:30,01:15,..." --keep-video (extract at moments)
 Step 4: vision_analyze all frames → cross-reference → analysis
 ```
@@ -786,7 +792,7 @@ rtk jq '.transcript[].words[] | select(.confidence < 0.5) | {word, start, confid
 rtk jq '.scene_boundaries[] | select(.inter_cost > 30) | {start_sec, end_sec, inter_cost}' /tmp/watch-XXX/report.json
 ```
 
-**Step 3: Agent selects 15-20 key moments via LLM**
+**Step 3: Agent selects 21-25 key moments via LLM**
 - Use MOMENT_SELECTION_PROMPT template
 - Include JSON3 transcript sample + scene_boundaries sample
 - Select moments based on:
@@ -854,9 +860,12 @@ String truncation uses `chars().take(N)` instead of byte slicing (`[..N]`). Mult
 2. Writing intermediate files wastes tokens and creates confusion about source of truth
 3. The Rust binary is pure Python-free — using Python to generate files defeats the purpose
 
-**CORRECT workflow**:
+**CORRECT workflow** (two-pass):
 ```
-watch2 (single run) → report.json → agent reads → vision_analyze → cross-reference → summary
+Binary (pass 1): watch2 "URL" → report.json (transcript + scenes + uniform frames)
+Agent: reads report.json → selects 21-25 key moments via LLM
+Binary (pass 2): watch2 "URL" --timestamps "..." → extracts frames at key moments
+Agent: vision_analyze all frames → cross-reference → summary
 ```
 
 **NOT**:
