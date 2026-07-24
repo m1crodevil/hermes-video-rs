@@ -33,17 +33,17 @@ fn test_frame_meta_keyframe_engine() {
 }
 
 #[test]
-fn test_frame_meta_fallback_uniform() {
+fn test_frame_meta_no_frames() {
     let meta = FrameMeta {
-        engine: "uniform".into(),
-        candidate_count: 3,
-        selected_count: 3,
-        deduped_count: 1,
-        fallback: true,
-        dropped_out_of_window: 2,
+        engine: "none".into(),
+        candidate_count: 0,
+        selected_count: 0,
+        deduped_count: 0,
+        fallback: false,
+        dropped_out_of_window: 0,
     };
-    assert!(meta.fallback);
-    assert_eq!(meta.dropped_out_of_window, 2);
+    assert_eq!(meta.engine, "none");
+    assert_eq!(meta.selected_count, 0);
 }
 
 #[test]

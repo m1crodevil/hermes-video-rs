@@ -12,7 +12,6 @@ use std::path::PathBuf;
 pub struct PipelineContext {
     pub cli: cli::Cli,
     pub config: WatchConfig,
-    pub max_frames: u32,
     pub work: PathBuf,
     pub download_dir: PathBuf,
     pub frames_dir: PathBuf,
@@ -23,7 +22,7 @@ pub struct PipelineContext {
 /// Single-run pipeline — download, analyse, extract frames, report.
 pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
     let PipelineContext {
-        cli, config, max_frames, work, download_dir, frames_dir, start_time: _, mut cache,
+        cli, config, work, download_dir, frames_dir, start_time: _, mut cache,
     } = ctx;
 
     // ── Step 1: Download video + subtitle + scene detect ──────────────
@@ -85,10 +84,10 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
             eprintln!("[watch2] {} agent-provided timestamps", parsed.len());
             parsed
         } else {
-            // Uniform timestamps (baseline)
-            let uniform = generate_uniform_timestamps(duration, max_frames);
-            eprintln!("[watch2] {} uniform timestamps", uniform.len());
-            uniform
+            // No timestamps — skip frame extraction
+            eprintln!("[watch2] no --timestamps provided, skipping frame extraction");
+            eprintln!("[watch2] agent should read report.json, select moments, run again with --timestamps");
+            Vec::new()
         };
 
         if !timestamps.is_empty() {
@@ -127,15 +126,7 @@ fn empty_frame_meta() -> frames::FrameMeta {
     }
 }
 
-/// Generate evenly-spaced timestamps across the video for uniform frame extraction.
-fn generate_uniform_timestamps(duration: f64, count: u32) -> Vec<f64> {
-    if duration <= 0.0 || count == 0 {
-        return Vec::new();
-    }
-    let n = count.min(21).max(1);
-    let step = duration / (n as f64 + 1.0);
-    (1..=n).map(|i| step * i as f64).collect()
-}
+
 
 fn detect_scenes(vp: &std::path::Path, duration: f64) -> Vec<crate::scene_detect::SceneBoundary> {
     match crate::scene_detect::detect(vp, 30.0, duration) {

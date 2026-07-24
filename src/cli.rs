@@ -56,7 +56,7 @@ pub struct Cli {
     pub cache_dir: Option<String>,
 
     /// Comma-separated timestamps for cue frame extraction (e.g. "00:30,01:15,02:45")
-    /// When set, extracts frames ONLY at these timestamps (skips uniform extraction)
+    /// Extracts frames ONLY at these timestamps. Without this flag, no frames are extracted.
     #[arg(long)]
     pub timestamps: Option<String>,
 }

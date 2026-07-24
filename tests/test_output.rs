@@ -8,7 +8,7 @@ fn make_test_report() -> WatchReport {
         detail: "balanced".into(),
         uploader: None,
         language: None,
-        engine: Some("scene-or-uniform".into()),
+        engine: Some("none".into()),
         frames: vec![],
         frames_dropped: 0,
         transcript: vec![],
@@ -31,7 +31,7 @@ fn make_full_report() -> WatchReport {
         detail: "token-burner".into(),
         uploader: Some("TestChannel".into()),
         language: Some("en".into()),
-        engine: Some("two-pass".into()),
+        engine: Some("timestamps".into()),
         frames: vec![
             FrameInfo {
                 path: "/tmp/frame_0001.jpg".into(),
@@ -209,7 +209,7 @@ fn test_markdown_metadata_fields() {
     let md = report.to_markdown();
     assert!(md.contains("**Uploader:** TestChannel"));
     assert!(md.contains("**Language:** en"));
-    assert!(md.contains("**Engine:** two-pass"));
+    assert!(md.contains("**Engine:** timestamps"));
 }
 
 #[test]
@@ -219,7 +219,7 @@ fn test_json_metadata_fields() {
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed["uploader"], "TestChannel");
     assert_eq!(parsed["language"], "en");
-    assert_eq!(parsed["engine"], "two-pass");
+    assert_eq!(parsed["engine"], "timestamps");
 }
 
 #[test]

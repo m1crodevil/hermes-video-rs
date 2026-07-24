@@ -23,22 +23,6 @@ pub struct FrameMeta {
 pub use metadata::get_metadata;
 pub use timestamp::extract_at_timestamps;
 
-pub fn auto_fps(duration: f64, max_frames: u32) -> f32 {
-    if duration <= 0.0 {
-        return MAX_FPS;
-    }
-    let raw_fps = max_frames as f32 / duration as f32;
-    raw_fps.min(MAX_FPS)
-}
-
-pub fn auto_fps_focus(duration: f64, max_frames: u32) -> f32 {
-    if duration <= 0.0 {
-        return MAX_FPS;
-    }
-    let raw_fps = max_frames as f32 / duration as f32;
-    raw_fps.min(MAX_FPS)
-}
-
 /// Pick `n` evenly-spaced items from a slice (always first + last).
 pub(crate) fn even_indices(count: usize, n: usize) -> Vec<usize> {
     if n >= count {

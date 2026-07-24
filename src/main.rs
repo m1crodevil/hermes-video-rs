@@ -76,7 +76,6 @@ async fn main() -> anyhow::Result<()> {
     let ctx = PipelineContext {
         cli,
         config,
-        max_frames: 100,
         work: work.clone(),
         download_dir,
         frames_dir,
