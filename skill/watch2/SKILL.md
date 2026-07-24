@@ -17,6 +17,19 @@ metadata:
     requires_toolsets: [terminal]
 ---
 
+## Quick Reference
+
+**Binary command:** `watch2 "URL" --out-dir /tmp/watch-XXX --output both`
+**Agent flow:** Run binary → Read report.json → Select moments → --timestamps → Vision analyze → Analysis
+**Key flags:** --timestamps, --keep-video, --out-dir, --output, --resolution
+**Minimum frames:** ≥21 (MANDATORY — see [[Frame Count Verification Gate]])
+**Transcript required:** Yes — binary exits without it
+
+**When to use:** User shares video URL or local path, asks about video content
+**When NOT to use:** Download only (use yt-dlp), Edit video (use ffmpeg), Audio only (use whisper)
+
+---
+
 # /watch2
 
 Rust-powered video analysis. Faster startup (~5ms), smaller memory (~5-15MB), single binary (5.4MB).
@@ -47,6 +60,11 @@ The user wants to understand what the video is about. Your job is to deliver a c
 **Data flow**: `binary → report.json → agent reads transcript+scenes → agent selects moments → agent calls watch2 --timestamps → binary extracts frames → agent vision_analyze → cross-reference → summary`. All analysis flows through your response text, never through intermediate files.
 
 **NEVER use `execute_code` or Python scripts** during watch2 analysis. The Rust binary is pure Python-free. Write findings in your response, not to JSON files.
+
+**STOP when:**
+- Analysis is comprehensive (key findings + main arguments + conclusions)
+- All cross-references are incorporated naturally into summary
+- No process artifacts leak into output text
 
 ## Mandatory Agent Workflow
 
@@ -193,15 +211,7 @@ watch2 "URL" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/wa
 - Combine transcript insights + scene context + visual evidence
 - Deliver final summary (no process artifacts)
 
-### Why Each Step Matters
-
-- **Step 1 (Run binary)**: Single pass — downloads, parses transcript, detects scenes, extracts frames
-- **Step 2 (Read report.json)**: Extracts transcript + scene_boundaries + frame list for agent
-- **Step 4 (LLM moment selection)**: Uses transcript context + scene boundaries to select moments needing visual verification
-- **Step 5 (Timestamp extraction)**: Frames extracted at LLM-selected moments, not uniform intervals
-- **Step 6 (Vision analysis)**: Every frame analyzed — no blind spots
-- **Step 7 (Cross-reference)**: Transcript says "X shows Y" → vision confirms/denies. Core value of pipeline.
-- **Step 8 (Analysis)**: Final output combines all data sources
+### Output Template
 
 Always use this structure when delivering watch2 results:
 
@@ -224,6 +234,22 @@ Channel: [Uploader] · Duration: [time]
 - **NEVER** use raw markdown table syntax (`| col | col |`) in Telegram output
 - **Stats block is OPTIONAL** — include only if the user specifically asks for processing stats
 - **NEVER output**: cross-reference tables, correction sections, verification trails, or frame-by-frame notes
+
+### Example Outputs
+
+**Example 1: Simple video summary**
+🎬 **How to Build a REST API in 10 Minutes**
+Channel: TechWithTim · Duration: 10:23
+
+---
+This video walks through building a REST API using Node.js and Express. The host covers route setup, middleware configuration, and error handling in a practical, step-by-step format.
+---
+
+**Example 2: Cross-reference finding**
+The transcript mentions "Ragnarok" at 0:54, but the on-screen text shows "Ragnarök" (with umlaut). This is a common ASR error for Scandinavian names.
+
+**Example 3: Error case (no transcript)**
+⚠️ No transcript available for this video. Set GROQ_API_KEY or OPENAI_API_KEY for Whisper transcription.
 
 ## Rust-Only Rule (MANDATORY)
 
@@ -294,32 +320,6 @@ watch2 "https://youtu.be/abc" --timestamps "00:30,01:15,02:45,..." --keep-video 
 ### Local File
 ```bash
 watch2 ~/Videos/recording.mp4 --out-dir /tmp/watch-XXX --output both
-```
-
-### Custom Resolution
-```bash
-watch2 "https://youtu.be/abc" --resolution 720 --out-dir /tmp/watch-XXX
-```
-
-## Decision Tree
-
-```
-Video has captions (JSON3/VTT) or Whisper API key?
-├── YES → Run watch2:
-│   ├── Step 1: watch2 "URL" --out-dir /tmp/watch-XXX --output both
-│   │   (extracts transcript + scene_boundaries + uniform frames)
-│   ├── Step 2: Read report.json (transcript + scene_boundaries + frames)
-│   ├── Step 3: LLM detect language
-│   ├── Step 4: LLM select 21-25 key moments
-│   ├── Step 5: watch2 --timestamps "00:30,01:15,..." --keep-video --out-dir /tmp/watch-XXX
-│   ├── Step 6: vision_analyze all frames (≥21 minimum)
-│   ├── Step 7: Cross-reference transcript × scenes × vision
-│   └── Step 8: Generate comprehensive analysis
-│
-└── NO → Binary bails:
-    ├── Option A: Set GROQ_API_KEY/OPENAI_API_KEY → retry
-    ├── Option B: Use yt-dlp + ffmpeg manually
-    └── Option C: Skip video (no transcript = no analysis)
 ```
 
 ## Workflow
