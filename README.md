@@ -96,6 +96,22 @@ Every vision finding is classified:
 
 ---
 
+## Skill Architecture
+
+The skill uses **progressive disclosure** — the agent loads only what it needs:
+
+```
+Tier 1: skill_view('watch2') → 216-line core (~800 tokens)
+Tier 2: skill_view('watch2', file_path) → reference files on-demand
+```
+
+**Core** (`SKILL.md`): Quick reference, output format, CLI options, configuration
+**References** (`references/`): Detailed workflows, pitfalls, visual verification rules (14 files)
+
+This keeps token cost minimal (~800 tokens per invocation vs ~12K before) while providing full context when needed. Based on Hermes Agent's 4-tier progressive disclosure model.
+
+---
+
 ## Key Features
 
 | Feature | Detail |
@@ -174,28 +190,29 @@ SETUP_COMPLETE=true
 
 ```
 watch2/
+├── skill/watch2/
+│   ├── SKILL.md              # Core skill (216 lines, ~800 tokens)
+│   └── references/           # On-demand reference files (14 files)
+│       ├── agent-workflow.md # Full 8-step workflow
+│       ├── pitfalls.md       # Debugging reference
+│       ├── moment-selection.md
+│       └── ...
 ├── src/
 │   ├── main.rs             # Entry point — CLI, cache init, pipeline run
-│   ├── cli.rs              # clap CLI definition (source, resolution, flags)
-│   ├── config.rs           # Config loading (.env) — API keys
-│   ├── setup.rs            # Preflight checks (binaries, API keys)
-│   ├── error.rs            # WatchError enum (thiserror)
+│   ├── cli.rs              # clap CLI definition
+│   ├── config.rs           # Config loading (.env)
+│   ├── pipeline.rs         # Linear pipeline
 │   ├── download.rs         # yt-dlp wrapper with retry + caching
 │   ├── transcript.rs       # JSON3/VTT subtitle parser
-│   ├── timestamp.rs        # Timestamp parsing (SS, MM:SS, HH:MM:SS)
-│   ├── pipeline.rs         # Linear pipeline — language detection, download, transcript, scenes
 │   ├── frames/
 │   │   ├── mod.rs          # auto-fps, scale filter, FrameMeta
 │   │   ├── metadata.rs     # ffprobe video metadata
-│   │   └── timestamp.rs    # Frame extraction at specific timestamps
+│   │   └── timestamp.rs    # Frame extraction at timestamps
 │   ├── scene_detect.rs     # av-scenechange integration
-│   ├── moments.rs          # LLM moment detection + prompt generation
-│   ├── moment_frames.rs    # Moment-frame linking + timestamp extraction
-│   ├── vision.rs           # Vision analysis (batch LLM calls)
-│   ├── output.rs           # WatchReport structs + markdown/JSON output
-│   ├── cache.rs            # Download cache (SHA256, video + subtitles)
-│   └── whisper.rs          # Groq/OpenAI Whisper API client
-└── tests/                  # Integration tests (170 passing)
+│   ├── output.rs           # WatchReport structs + output
+│   ├── cache.rs            # Download cache (SHA256)
+│   └── whisper.rs          # Groq/OpenAI Whisper API
+└── tests/                  # Integration tests
 ```
 
 ---
