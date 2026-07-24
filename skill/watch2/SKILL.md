@@ -148,18 +148,23 @@ which av-scenechange || echo "Install: cargo install av-scenechange --features f
 
 ## Quick Start
 
+**Recommended workflow (two passes):**
+
 ```bash
-# Basic: uniform frames + transcript + scene data (single pass)
+# Pass 1: Get report.json (uniform frames + transcript + scene data)
 watch2 "https://youtu.be/abc" --out-dir /tmp/watch-XXX --output both
 
-# Agent-selected moments (recommended):
-# 1. Run binary → get report.json
-# 2. Agent selects 21-25 key moments via LLM
-# 3. watch2 --timestamps "00:30,01:15,..." --keep-video --out-dir /tmp/watch-XXX
-
-# Local file
-watch2 ~/Videos/recording.mp4 --out-dir /tmp/watch-XXX --output both
+# Pass 2: After agent selects key moments via LLM
+watch2 "https://youtu.be/abc" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/watch-XXX
 ```
+
+**Steps:**
+1. Run binary → get report.json (21 uniform frames + transcript + scene boundaries)
+2. Agent reads report.json, selects 21-25 key moments using transcript + scene data
+3. Run binary again with `--timestamps` → extract frames at key moments
+4. Vision analyze ALL extracted frames (minimum 21)
+
+**Why two passes?** Uniform frames are sampling. Agent-selected moments are targeted — at speaker transitions, topic changes, visual demonstrations.
 
 ## CLI Options
 
