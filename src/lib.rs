@@ -11,7 +11,4 @@ pub mod scene_detect;
 pub mod setup;
 pub mod timestamp;
 pub mod transcript;
-pub mod moments;
-pub mod moment_frames;
-pub mod vision;
 pub mod whisper;
