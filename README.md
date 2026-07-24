@@ -28,7 +28,7 @@ Zero config to start. `yt-dlp`, `ffmpeg`, and `av-scenechange` are the only runt
 | **Memory** | ~50-100MB | ~5-15MB |
 | **Binary** | 0 (needs Python runtime) | ~6MB self-contained |
 | **Install** | pip + yt-dlp + ffmpeg | Single binary + yt-dlp + ffmpeg + av-scenechange |
-| **Tests** | 1,379 LOC | 5,311 LOC (173 passing) |
+| **Tests** | 1,379 LOC | 5,311 LOC (170 passing) |
 
 ---
 
@@ -42,9 +42,9 @@ Zero config to start. `yt-dlp`, `ffmpeg`, and `av-scenechange` are the only runt
 
 **Cut the hype out of an update video.** `watch2 https://youtu.be/ what's actually new --skip-the-hype`
 
-**Catch what captions get wrong.** The pipeline sends the transcript to an LLM which selects key moments automatically, then extracts frames at those timestamps and cross-references the transcript against what's actually on screen.
+**Catch what captions get wrong.** The binary outputs the transcript with word-level timing; the agent selects key moments via LLM, extracts frames at those timestamps, and cross-references the transcript against what's actually on screen.
 
-**Verify transcript accuracy with visual evidence.** Automatically identifies moments in the transcript that need visual verification (proper nouns, game names, claims, deictic references) via LLM selection, extracts frames at those timestamps, and validates the transcript against what's actually shown.
+**Verify transcript accuracy with visual evidence.** The agent identifies moments in the transcript that need visual verification (proper nouns, game names, claims, deictic references) via LLM selection, extracts frames at those timestamps, and validates the transcript against what's actually shown.
 
 ---
 
@@ -65,7 +65,7 @@ Video URL / local path
     ↓
 5. Scene detection via av-scenechange
     ↓
-6. LLM selects key moments (Groq/OpenAI inline) + extracts frames at those timestamps
+6. Agent reads report.json → selects key moments via LLM → extracts frames at those timestamps
     ↓
 7. Cleanup video file (save disk space)
     ↓
@@ -80,12 +80,12 @@ watch2 runs everything in one pass — no re-running, no intermediate files:
 2. Downloads the video and targeted subtitles (1-2 requests instead of 157)
 3. Parses the transcript from the best-matching language
 4. Runs scene detection
-5. Sends the transcript to an LLM (Groq/OpenAI) which selects the key moments inline
-6. Extracts frames at those timestamps
+5. Outputs report.json with transcript, scene boundaries, and metadata
+6. Agent reads report.json → selects key moments via LLM → extracts frames at those timestamps
 7. Builds a `WatchReport` with frames, transcript, scene boundaries, and key moment metadata
 7. Cleans up the video file
 
-Everything happens in a single invocation. No `moments_prompt.txt`, no `key_moments.json`, no agent handoff — the LLM selects moments directly during the pipeline run.
+The binary handles data extraction only. All intelligence (LLM calls, moment selection, analysis) is handled by the agent. No `moments_prompt.txt`, no `key_moments.json` — the agent reads `report.json` and decides what to analyze.
 
 ---
 
@@ -112,6 +112,7 @@ watch2 https://vimeo.com/123 what tools does she mention?
 | `--output markdown\|json\|both` | Output format | markdown |
 | `--no-cache` | Disable download cache | false |
 | `--cache-dir DIR` | Custom cache directory | `~/.cache/watch2` |
+| `--timestamps T` | Comma-separated timestamps for cue frame extraction (e.g. "00:30,01:15,02:45") | none |
 
 ---
 
@@ -168,8 +169,9 @@ Captions cover the majority of public videos for free. The Whisper fallback only
 | Capability | Requirement | Cost |
 |------------|-------------|------|
 | Download + native captions | `yt-dlp` + `ffmpeg` | Free |
-| LLM moment selection + Whisper fallback (preferred) | [Groq API key](https://console.groq.com/keys) | ~$0.004/min |
-| LLM moment selection + Whisper fallback (alt) | [OpenAI API key](https://platform.openai.com/api-keys) | Standard pricing |
+| Agent-side moment selection | Agent LLM (via Hermes) | Included |
+| Whisper fallback (preferred) | [Groq API key](https://console.groq.com/keys) | ~$0.004/min |
+| Whisper fallback (alt) | [OpenAI API key](https://platform.openai.com/api-keys) | Standard pricing |
 | Disable Whisper | `--no-whisper` | Free, frames-only |
 
 ---
@@ -210,8 +212,7 @@ watch2/
 │   ├── download.rs         # yt-dlp wrapper with retry + caching
 │   ├── transcript.rs       # JSON3/VTT subtitle parser
 │   ├── timestamp.rs        # Timestamp parsing (SS, MM:SS, HH:MM:SS)
-│   ├── llm.rs              # LLM language detection (Groq → OpenAI)
-│   ├── pipeline.rs         # Linear pipeline — no mode branching
+│   ├── pipeline.rs         # Linear pipeline — language detection, download, transcript, scenes
 │   ├── frames/
 │   │   ├── mod.rs          # auto-fps, scale filter, FrameMeta
 │   │   ├── metadata.rs     # ffprobe video metadata
@@ -223,7 +224,7 @@ watch2/
 │   ├── output.rs           # WatchReport structs + markdown/JSON output
 │   ├── cache.rs            # Download cache (SHA256, video + subtitles)
 │   └── whisper.rs          # Groq/OpenAI Whisper API client
-└── tests/                  # Integration tests (173 passing)
+└── tests/                  # Integration tests (170 passing)
 ```
 
 ---
@@ -254,21 +255,21 @@ RUST_LOG=debug cargo run -- --help
 
 ## Key Moments Pipeline
 
-The moment-detection pipeline runs inline during a single invocation:
+The binary outputs structured data. The agent handles moment selection:
 
 ```
 Video URL / local path
     ↓
-Download + transcript + scene detection
+Binary: Download + transcript + scene detection → report.json
     ↓
-LLM (Groq/OpenAI) selects key moments from transcript + scene data
+Agent: LLM selects key moments from transcript + scene data
     ↓
-Frame extraction at selected timestamps → WatchReport
+Binary: Frame extraction at selected timestamps → WatchReport
     ↓
 Agent reads report, analyzes frames via vision (optional)
 ```
 
-**Data flow**: `report.json` is the single source of truth. The Rust binary outputs structured data; the agent reads it directly.
+**Data flow**: `report.json` is the single source of truth. The Rust binary outputs structured data (transcript, scene boundaries, metadata); the agent reads it, selects key moments via LLM, and orchestrates frame extraction + vision analysis.
 
 **Cross-reference methodology**: Every vision finding is classified:
 - ✅ **confirmed** — vision matches transcript
@@ -294,6 +295,12 @@ Core:
 - `regex` 1 — transcript parsing
 - `dotenvy` 0.15 — .env config loading
 - `dirs` 6 — platform cache directories
+- `tracing` / `tracing-subscriber` — structured logging
+- `chrono` — timestamp handling
+- `which` — binary existence checks
+- `hex` — encoding utilities
+- `async-trait` — async trait support
+- `tempfile` — temporary file management
 
 Dev:
 - `assert_cmd` 2 / `predicates` 3 — CLI integration tests
