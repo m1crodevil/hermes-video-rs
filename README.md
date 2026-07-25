@@ -7,7 +7,7 @@
 [![Rust](https://img.shields.io/badge/rust-2024+-orange.svg)](https://www.rust-lang.org/)
 [![Hermes Agent](https://img.shields.io/badge/Hermes-Agent-purple)](https://hermes-agent.nousresearch.com)
 [![GitHub stars](https://img.shields.io/github/stars/m1crodevil/hermes-video-rs)](https://github.com/m1crodevil/hermes-video-rs/stargazers)
-[![Version](https://img.shields.io/badge/version-7.2.0-blue.svg)](https://github.com/m1crodevil/hermes-video-rs/releases)
+[![Version](https://img.shields.io/badge/version-8.1.0-blue.svg)](https://github.com/m1crodevil/hermes-video-rs/releases)
 
 **Works with:** Hermes Agent · Claude Code · Codex · Any AI agent that reads files
 
@@ -76,7 +76,7 @@ Video URL / local path
     ↓
 5. Scene detection via av-scenechange
     ↓
-6. Agent reads report.json → selects key moments via LLM → extracts frames
+6. Agent reads report.json → selects key moments via tiered LLM priority (hook-first, impact-scored) → extracts frames
     ↓
 7. Cleanup video file (save disk space)
     ↓
@@ -106,7 +106,7 @@ Tier 2: skill_view('watch2', file_path) → reference files on-demand
 ```
 
 **Core** (`SKILL.md`): Quick reference, output format, CLI options, configuration
-**References** (`references/`): Detailed workflows, pitfalls, visual verification rules (14 files)
+**References** (`references/`): Detailed workflows, pitfalls, visual verification rules (16 files)
 
 This keeps token cost minimal (~800 tokens per invocation vs ~12K before) while providing full context when needed. Based on Hermes Agent's 4-tier progressive disclosure model.
 
@@ -117,6 +117,9 @@ This keeps token cost minimal (~800 tokens per invocation vs ~12K before) while 
 | Feature | Detail |
 |---------|--------|
 | Transcript-first | JSON3 captions with word-level timing |
+| Tiered moment selection | 3-tier priority: hooks → arguments → entities (impact-scored) |
+| Standalone check | Rejects moments that need surrounding context |
+| Anti-pattern filter | Skips intros, outros, filler, sponsor reads |
 | Scene detection | av-scenechange for visual boundaries |
 | Cross-reference | Frames vs transcript — catches misspellings, fabrications |
 | Single binary | ~6MB, zero config, 5ms cold start |
@@ -192,10 +195,14 @@ SETUP_COMPLETE=true
 watch2/
 ├── skill/watch2/
 │   ├── SKILL.md              # Core skill (216 lines, ~800 tokens)
-│   └── references/           # On-demand reference files (14 files)
+│   └── references/           # On-demand reference files (16 files)
 │       ├── agent-workflow.md # Full 8-step workflow
 │       ├── pitfalls.md       # Debugging reference
-│       ├── moment-selection.md
+│       ├── moment-selection.md   # Tiered priority + impact scoring
+│       ├── transcript-moments-pipeline.md
+│       ├── visual-verification.md
+│       ├── reading-report.md
+│       ├── scene-detection.md
 │       └── ...
 ├── src/
 │   ├── main.rs             # Entry point — CLI, cache init, pipeline run

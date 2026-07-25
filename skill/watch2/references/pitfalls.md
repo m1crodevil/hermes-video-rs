@@ -43,7 +43,7 @@ ls "$OUTDIR/download/"*.json3 "$OUTDIR/download/"*.vtt 2>/dev/null
 for each moment in agent_selected_timestamps:
   ffmpeg -y -ss <seconds> -i video.mp4 -frames:v 1 -q:v 2 frames/frame_NNNN.jpg
 ```
-This produces equivalent output to watch2's timestamp extraction mode. Always verify frame count ≥21 after extraction.
+This produces equivalent output to watch2's timestamp extraction mode. Always verify frame count ≥15 after extraction (scale with duration — see moment-selection.md).
 
 ### Subtitle Download Strategy (v4.5.0+)
 
@@ -106,26 +106,26 @@ vision_analyze(frame_0021.jpg)  # End
 # ... continue for all 21+ frames
 ```
 
-**⚠️ NEVER analyze fewer than 21 frames.** The minimum exists because fewer frames = blind spots in visual analysis. See [[Frame Count Verification Gate]] and [[Agent Shortcut: Analyzing Fewer Than 21 Frames]] pitfalls.
+**⚠️ NEVER analyze fewer than 15 frames.** The minimum exists because fewer frames = blind spots in visual analysis. See [[Frame Count Verification Gate]] and [[Agent Shortcut: Analyzing Too Few Frames]] pitfalls.
 
-### Agent Shortcut: Analyzing Fewer Than 21 Frames (COMMON MISTAKE)
+### Agent Shortcut: Analyzing Too Few Frames (COMMON MISTAKE)
 
-**What happens**: watch2 fails (duration bug, extraction error), agent falls back to manual ffmpeg, extracts 15-20 frames, analyzes only 5-8 with `vision_analyze` to "save API calls", delivers shallow analysis.
+**What happens**: watch2 fails (duration bug, extraction error), agent falls back to manual ffmpeg, extracts too few frames, analyzes only a subset with `vision_analyze` to "save API calls", delivers shallow analysis.
 
-**Why it's wrong**: The 21-frame minimum exists because fewer frames = blind spots. A 7-minute video needs ~1 frame per 20 seconds minimum to catch all visual context.
+**Why it's wrong**: The frame minimum exists because fewer frames = blind spots. A 5-minute video needs ~1 frame per 20 seconds minimum to catch all visual context.
 
 **Root cause chain** (from real session):
 1. watch2 duration detection bug → 0 frames extracted
-2. Agent manually extracts ad-hoc timestamps (not calculated) → <21 frames
+2. Agent manually extracts ad-hoc timestamps (not calculated) → <15 frames
 3. Agent "saves cost" by analyzing only a subset → shallow analysis
 
 **Prevention**:
-- After ANY frame extraction (watch2 --timestamps OR manual ffmpeg), **VERIFY count ≥21** before proceeding
-- If <21: add more timestamps from scene boundaries, re-extract
-- Never "sample strategically" below 21 — that's a cost-optimization shortcut that sacrifices accuracy
+- After ANY frame extraction (watch2 --timestamps OR manual ffmpeg), **VERIFY count ≥15** before proceeding
+- If <15: add more timestamps from scene boundaries, re-extract
+- Never "sample strategically" below 15 — that's a cost-optimization shortcut that sacrifices accuracy
 - See: [[Frame Count Verification Gate]] section above
 
-**If this happens again**: STOP. Extract more frames. Do NOT deliver analysis with <21 frames.
+**If this happens again**: STOP. Extract more frames. Do NOT deliver analysis with <15 frames.
 
 ### Don't Skip Agent-Side Moment Selection (CRITICAL)
 
@@ -134,7 +134,7 @@ vision_analyze(frame_0021.jpg)  # End
 **CORRECT workflow:**
 ```
 Pass 1: watch2 (gets transcript + scene data, NO frames)
-Step 2: Agent reads report.json via jq → selects key moments via LLM (minimum 21, no maximum)
+Step 2: Agent reads report.json via jq → selects key moments via LLM (scale with duration, see moment-selection.md)
 Pass 3: watch2 --timestamps "00:30,01:15,..." --keep-video (extract at moments)
 Step 4: vision_analyze all frames → cross-reference → analysis
 ```
@@ -185,14 +185,15 @@ jq '.transcript[].words[] | select(.confidence < 0.5) | {word, start, confidence
 jq '.scene_boundaries[] | select(.inter_cost > 30) | {start_sec, end_sec, inter_cost}' /tmp/watch-XXX/report.json
 ```
 
-**Step 3: Agent selects key moments via LLM (minimum 21, no maximum)**
-- Use MOMENT_SELECTION_PROMPT template
+**Step 3: Agent selects key moments via LLM (minimum 15+, scale with duration)**
+- Use MOMENT_SELECTION_PROMPT template (see moment-selection.md for tiered criteria)
 - Include JSON3 transcript sample + scene_boundaries sample
 - Select moments based on:
   - Low confidence words (potential misspellings)
   - High-cost scene changes (visual transitions)
-  - Proper nouns, claims, deictic references
+  - Hook moments, key arguments, claims/statistics
   - Topic transitions (scene changes)
+- Apply standalone check and anti-pattern filter
 
 **Step 4: Extract frames at selected timestamps**
 ```bash
@@ -205,7 +206,7 @@ Cross-reference with frame timestamps to confirm visual context, then compile to
 
 When av-scenechange library API fails (VariableFormat, VariableFramerate, unsupported codec), the binary gracefully falls back to ffmpeg scene detection with adaptive thresholds. Warning is printed but no crash.
 
-**Fallback behavior:** No scoring data available in fallback mode (ffmpeg scene detection doesn't provide scores). Agent should select more moments to ensure ≥21 frames.
+**Fallback behavior:** No scoring data available in fallback mode (ffmpeg scene detection doesn't provide scores). Agent should select more moments to ensure ≥15 frames.
 
 ### CJK/Unicode Character Safety
 
@@ -235,7 +236,7 @@ String truncation uses `chars().take(N)` instead of byte slicing (`[..N]`). Mult
 **Impact**: The pipeline still extracts frames at key timestamps, but `vision_analyze` can only describe the speakers' expressions and setting. It CANNOT verify transcript claims visually (no numbers, text, or graphics to cross-reference).
 
 **How to handle**:
-1. Extract frames anyway (maintains ≥21 frame minimum for visual coverage)
+1. Extract frames anyway (maintains ≥15 frame minimum for visual coverage)
 2. Analyze frames for: speaker expressions, body language, setting details
 3. Note in analysis: "No on-screen graphics — transcript claims unverified visually"
 4. Focus analysis depth on transcript content rather than visual verification
@@ -256,7 +257,7 @@ String truncation uses `chars().take(N)` instead of byte slicing (`[..N]`). Mult
 **CORRECT workflow** (two-pass):
 ```
 Pass 1: watch2 "URL" → report.json (transcript + scenes, NO frames)
-Agent: reads report.json via jq → selects key moments via LLM (minimum 21, no maximum)
+Agent: reads report.json via jq → selects key moments via LLM (scale with duration, see moment-selection.md)
 Pass 2: watch2 "URL" --timestamps "..." → extracts frames at key moments
 Agent: vision_analyze all frames → cross-reference → summary
 ```

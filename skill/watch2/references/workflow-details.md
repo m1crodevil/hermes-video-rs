@@ -19,7 +19,7 @@ Agent reads report.json via jq:
 ├── Transcript (JSON3 with word-level timing + confidence)
 ├── Scene boundaries (av-scenechange data)
 ├── Metadata (title, uploader, duration, language)
-└── Selects key moments (minimum 21, no maximum)
+└── Selects key moments (scale with duration, see moment-selection.md)
 
 Pass 2: Extract frames at agent-selected timestamps
 ├── watch2 "URL" --timestamps "00:30,01:15,..." --keep-video --out-dir /tmp/watch-XXX
@@ -82,11 +82,11 @@ When no captions are available AND no Whisper API key is set, the binary bails. 
 **After ANY frame extraction method (watch2 --timestamps OR manual ffmpeg), BEFORE proceeding to vision analysis:**
 
 1. Count extracted frames: `ls <workdir>/frames/*.jpg | wc -l`
-2. **If count < 21**: STOP. Do NOT proceed with vision analysis on fewer than 21 frames.
+2. **If count < 15**: STOP. Do NOT proceed with vision analysis on fewer than 15 frames.
 3. Fix the extraction first:
-   - If watch2 failed → use manual ffmpeg with calculated fps (duration ÷ 21)
+   - If watch2 failed → use manual ffmpeg with calculated fps (duration ÷ target_frames)
    - If agent selected too few moments → add more timestamps from scene boundaries
    - If video is short (<3 min) → extract at every 5 seconds
-4. Re-count. Only proceed when ≥21 frames confirmed.
+4. Re-count. Only proceed when ≥15 frames confirmed (scale with duration — see moment-selection.md).
 
-**Why 21 minimum**: Fewer frames = blind spots in visual analysis. A 7-minute video needs at least one frame every 20 seconds to catch all visual context. Skipping this produces shallow, unreliable analysis.
+**Why 15 minimum**: Fewer frames = blind spots in visual analysis. A 5-minute video needs at least one frame every 20 seconds to catch all visual context. Skipping this produces shallow, unreliable analysis.

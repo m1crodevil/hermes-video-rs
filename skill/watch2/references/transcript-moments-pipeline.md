@@ -78,11 +78,14 @@ Grounded summary with corrections (final output)
   {
     "timestamp": 54.0,             // f64 seconds (NOT MM:SS string!)
     "timestamp_fmt": "0:54",       // MM:SS string (agent MUST provide)
-    "word": "Ragnarok",            // Triggering word/phrase
-    "context": "Ya kan Ragnarok",  // Surrounding text
-    "reason": "proper_noun",       // Detection category
-    "question": "What game name is displayed?",  // Vision question
+    "word": "breakthrough",        // Triggering word/phrase
+    "context": "This changes everything. The breakthrough we've been waiting for.",
+    "reason": "hook_moment",       // Detection category (see below)
+    "question": "What product or discovery is shown on screen?",
     "priority": 1,                 // 1=critical, 5=nice-to-have
+    "impact_score": 8,             // 1-10 impact rating (hook + value + verification + context)
+    "standalone": true,            // Does this moment work without surrounding context?
+    "hook_type": "surprising_statement",  // Hook classification
     "frame_path": null             // Always null (binary fills after extraction)
   }
 ]
@@ -92,14 +95,14 @@ Grounded summary with corrections (final output)
 
 ## Detection Categories
 
-1. **proper_noun** — names, brands, titles (ASR often mangles these)
-2. **claim** — numbers, prices, dates
-3. **deictic** — "this", "that", "look at this"
-4. **speaker_id** — unclear who is speaking
-5. **visual_context** — understanding visuals changes interpretation
-6. **entity** — game names, software, products
-7. **topic_transition** — conversation shifts
-8. **key_argument** — important conclusions
+1. **hook_moment** — surprising claims, bold statements, emotional peaks
+2. **key_argument** — important conclusions, controversial statements
+3. **claim** — numbers, prices, dates, percentages
+4. **entity** — brand names, product names, on-screen text, proper nouns
+5. **topic_transition** — conversation shifts (correlate with scene_boundaries)
+6. **visual_context** — understanding visuals changes interpretation
+7. **deictic** — "this", "that", "look at this" where speaker points
+8. **speaker_id** — unclear who is speaking
 
 ## Anti-Hallucination Rules
 
@@ -110,7 +113,7 @@ Grounded summary with corrections (final output)
 5. Cross-reference transcript against visual evidence
 6. No assumptions — don't fill gaps with plausible guesses
 7. Report contradictions — transcript says X but frame shows Y
-8. Source every correction — "Frame at 2:15 shows 'Ragnarok' not 'Raknarok'"
+8. Source every correction — "Frame at 2:15 shows 'OpenAI' not 'Open Ai'"
 
 ## Common Pitfalls
 

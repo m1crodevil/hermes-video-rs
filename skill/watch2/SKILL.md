@@ -1,6 +1,6 @@
 ---
 name: watch2
-version: "8.0.0"
+version: "8.1.0"
 description: "Rust-powered video analysis for AI agents — transcript-first with scene detection"
 argument-hint: " <url-or-path> [question]"
 allowed-tools: Bash, Read, AskUserQuestion
@@ -41,7 +41,7 @@ Rust-powered video analysis. Faster startup (~5ms), smaller memory (~5-15MB), si
 **Binary:** `watch2 "URL" --out-dir /tmp/watch-XXX --output both`
 **Flow:** Run binary (no frames) → Read report.json with jq → Agent selects moments → watch2 --timestamps → Vision analyze → Analysis
 **Flags:** --timestamps, --keep-video, --out-dir, --output, --resolution
-**Minimum frames:** ≥21 (MANDATORY). Scale: short (<10min) ≈21, medium (10-20min) ≈25, long (20min+) ≈30+
+**Minimum frames:** ≥15 (scale with duration). Short (<5min) ≈15, medium (5-20min) ≈21, long (20min+) ≈30+
 **Transcript required:** Yes — binary exits without it
 **Frame analysis:** Analyze EVERY extracted frame with vision_analyze. NEVER skip frames.
 **Report parsing:** Use `jq` — NEVER Python (`python3`, `execute_code`).
@@ -80,7 +80,7 @@ The user wants to understand what the video is about. Deliver comprehensive anal
 - All cross-references incorporated naturally into summary
 - No process artifacts leak into output text
 
-**Frame analysis rule:** After extracting frames, analyze EVERY frame with vision_analyze. Minimum 21 frames. NEVER skip frames to "save API calls" — fewer frames = blind spots in visual analysis.
+**Frame analysis rule:** After extracting frames, analyze EVERY frame with vision_analyze. Minimum 15 frames (scale with duration). NEVER skip frames to "save API calls" — fewer frames = blind spots in visual analysis.
 
 ## Report Parsing (MANDATORY)
 
@@ -140,7 +140,7 @@ This video walks through building a REST API using Node.js and Express. The host
 ---
 
 **Example 2: Cross-reference finding**
-The transcript mentions "Ragnarok" at 0:54, but on-screen text shows "Ragnarök" (with umlaut). Common ASR error for Scandinavian names.
+The transcript mentions "OpenAI" at 0:54, but on-screen text shows "Open AI" (two words). Common ASR capitalization variance.
 
 **Example 3: Error case (no transcript)**
 ⚠️ No transcript available. Set GROQ_API_KEY or OPENAI_API_KEY for Whisper.
@@ -194,15 +194,15 @@ watch2 "https://youtu.be/abc" --out-dir /tmp/watch-XXX --output both
 jq '{title, uploader, duration, scene_count}' /tmp/watch-XXX/report.json
 jq -r '.transcript[] | "[\(.start) → \(.end)] \(.text)"' /tmp/watch-XXX/report.json
 
-# Pass 2: After agent selects key moments (minimum 21, no cap)
+# Pass 2: After agent selects key moments (scale with duration, see moment-selection.md)
 watch2 "https://youtu.be/abc" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/watch-XXX
 ```
 
 **Steps:**
 1. Run binary → get report.json (transcript + scene boundaries, NO frames)
-2. Agent reads report.json via jq, selects key moments using transcript + scene data (minimum 21, no maximum — scale with video duration)
+2. Agent reads report.json via jq, selects key moments using transcript + scene data (scale with duration, see moment-selection.md)
 3. Run binary again with `--timestamps` → extract frames at key moments
-4. Vision analyze ALL extracted frames (minimum 21)
+4. Vision analyze ALL extracted frames (scale with duration)
 
 **Why two passes?** Pass 1 provides transcript + scene data for intelligent moment selection. Pass 2 extracts frames only at agent-selected moments — targeted at speaker transitions, topic changes, visual demonstrations. No wasted frames.
 

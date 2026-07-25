@@ -22,7 +22,7 @@ URL → download.rs → video.mp4 + video.*.json3
               report.json (transcript + scene_boundaries, NO frames)
                         ↓
               Agent reads report.json via jq
-              Agent selects key moments (minimum 21, no maximum)
+              Agent selects key moments (scale with duration, see moment-selection.md)
                         ↓
               watch2 --timestamps "00:30,01:15,..."
               frames/timestamp.rs → Vec<FrameInfo>

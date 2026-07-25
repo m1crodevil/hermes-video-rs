@@ -10,9 +10,9 @@
 
 **Location:** `download.rs:466-476`
 
-**Problem:** `read_dir()` return order is filesystem-dependent. In a directory with `video.id-orig.json3`, `video.id.json3`, AND `video.en.json3` (from pass 1), it could return the English file instead of Indonesian.
+**Problem:** `read_dir()` return order is filesystem-dependent. In a directory with `video.ja-orig.json3`, `video.ja.json3`, AND `video.en.json3` (from pass 1), it could return the English file instead of the detected language.
 
-**Fix:** `find_subtitle(dir, preferred_lang)` now takes a language parameter and prioritizes files matching the detected language pattern (`.id.` or `.id-` in filename).
+**Fix:** `find_subtitle(dir, preferred_lang)` now takes a language parameter and prioritizes files matching the detected language pattern (`.ja.` or `.ja-` in filename).
 
 ## Bug #2: Dual-pass Download Conflict — FIXED
 
@@ -135,7 +135,7 @@ Language detection now uses LLM (Groq → OpenAI fallback) to analyze video titl
 
 **Fallback chain**: LLM detection → yt-dlp `info.language` → available subs → English → Whisper fallback.
 
-**User requirement**: "pengguna skills ini global / universal, jangan ada hardcode seperti itu. gunakan LLM untuk determine, subs apa yg harus dia unduh, dan fallbacknya ke mana." — No hardcoded language keywords. LLM determines content language from title + description.
+**User requirement**: "This skill must be global/universal — no hardcoded language keywords. Use LLM to determine which subtitles to download, and where the fallback goes." — No hardcoded language keywords. LLM determines content language from title + description.
 
 ## Related Code Paths
 

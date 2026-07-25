@@ -13,7 +13,7 @@ The binary runs a **single-pass pipeline**:
 
 **Agent reads report.json via jq, then:**
 - Detects language from transcript
-- Selects key moments using transcript + scene data (minimum 21, no maximum)
+- Selects key moments using transcript + scene data (scale with duration, see moment-selection.md)
 - Extracts frames at those timestamps via --timestamps flag (Pass 2)
 - Vision analyzes all frames
 - Cross-references transcript × visuals
@@ -65,12 +65,26 @@ ls /tmp/watch-XXX/frames/*.jpg | wc -l
 
 ### Step 4: LLM Select Key Moments (using transcript + scene data)
 
-Agent selects key moments using this data (minimum 21, no maximum — scale with duration):
+Agent selects key moments using a tiered priority system (see moment-selection.md for full criteria).
+
+**Quantity scaling:**
+- Short (<5 min): minimum 15 moments
+- Medium (5–20 min): minimum 21 moments
+- Long (20+ min): scale with density (1 per 30–60s of transcript)
+
+**Selection process:**
+1. Fill Tier 1 slots first (hook moments, key arguments, claims/stats)
+2. Fill Tier 2 slots (entities, topic transitions, visual context)
+3. Fill Tier 3 slots (deictic references, speaker identity)
+4. Apply standalone check — reject or expand windows for non-standalone moments
+5. Apply anti-pattern filter — reject intros, outros, filler, sponsor reads
+6. Score each moment (impact_score 1–10) based on hook, value, verification need, context
+7. Spread evenly across FULL duration (beginning, middle, end)
 
 ```bash
 # Moment Selection Prompt Template
 MOMENT_SELECTION_PROMPT = """
-You are analyzing a video transcript + scene changes to identify key moments for visual verification.
+You are an expert video analyst selecting key moments for visual verification.
 
 VIDEO METADATA:
 - Title: {title}
@@ -85,41 +99,80 @@ TRANSCRIPT:
 SCENE BOUNDARIES:
 {scene_boundaries_sample}
 
-YOUR TASK: Select key moments where visual verification would improve accuracy. Minimum 21, no maximum — longer videos need more moments for comprehensive coverage.
+YOUR TASK: Select key moments where visual verification would improve analysis accuracy.
+Scale with duration — longer videos need more moments for comprehensive coverage.
 
-MOMENT SELECTION CRITERIA:
-1. **Proper nouns** — names, brands, titles that might be misspelled in auto-captions
-2. **Claims/statistics** — numbers, prices, dates that need fact-checking
-3. **Deictic references** — "this", "that", "here", "look at this" where speaker points
-4. **Topic transitions** — moments where conversation shifts (use scene_boundaries)
-5. **Key arguments** — important conclusions or controversial statements
-6. **Visual context** — moments where understanding visuals changes interpretation
-7. **Speaker identity** — moments where speaker changes or identity matters (`speaker_id`)
-8. **Entity recognition** — brand names, product names, on-screen text (`entity`)
+SELECTION CRITERIA (in priority order):
+
+TIER 1 — HIGH IMPACT (always select):
+1. HOOK MOMENTS — surprising claims, bold statements, emotional peaks,
+   "did you know" moments. First 2-3 seconds grab attention.
+2. KEY ARGUMENTS — conclusions, controversial statements, actionable advice
+3. CLAIMS/STATISTICS — numbers, prices, dates, percentages
+
+TIER 2 — MEDIUM IMPACT (select if slots remain):
+4. ENTITY RECOGNITION — brand names, product names, on-screen text,
+   proper nouns that ASR might misspell
+5. TOPIC TRANSITIONS — conversation shifts (correlate with scene_boundaries)
+6. VISUAL CONTEXT — moments where understanding visuals changes interpretation
+
+TIER 3 — LOW IMPACT (fill remaining slots):
+7. DEICTIC REFERENCES — "this", "that", "look at this" where speaker points
+8. SPEAKER IDENTITY — speaker changes, identity unclear from transcript
+
+STANDALONE CHECK (mandatory):
+Each moment MUST make sense without surrounding context. REJECT moments that
+reference earlier content ("as I mentioned earlier"), start mid-argument
+("and therefore"), or are ambiguous without the previous sentence.
+
+ANTI-PATTERNS (reject even if they match other criteria):
+- Intros: "hey guys", "welcome to my channel", "what's up everyone"
+- Outros: "don't forget to subscribe", "thanks for watching"
+- Filler: "so anyway", "basically", "you know"
+- Sponsor reads, repetitive statements, low-density tangents
+
+HOOK ASSESSMENT (for each candidate):
+Evaluate the FIRST 2-3 SECONDS:
+- Surprising statement → +2 impact
+- Question → +1 impact
+- Number/statistic → +1 impact
+- Direct address ("you", "everyone") → +1 impact
+- Filler ("so", "um", "well") → −2 impact
+
+SCORING (impact_score 1-10 for each selected moment):
+- hook (30%): Does the opening grab attention?
+- value (30%): Is the content insightful, surprising, or actionable?
+- verification (25%): Does this benefit from visual cross-referencing?
+- context (15%): Does this clarify or contradict the transcript?
 
 OUTPUT FORMAT: Return ONLY a JSON array of moments:
 [
   {
     "timestamp": 54.0,
     "timestamp_fmt": "0:54",
-    "word": "Ragnarok",
-    "context": "Ya kan Ragnarok. Tahu Ragnarok?",
-    "reason": "proper_noun",
-    "question": "What game name is displayed on screen?",
-    "priority": 1
+    "word": "breakthrough",
+    "context": "This changes everything. The breakthrough we've been waiting for.",
+    "reason": "hook_moment",
+    "question": "What product or discovery is shown on screen?",
+    "priority": 1,
+    "impact_score": 8,
+    "standalone": true,
+    "hook_type": "shocking_claim"
   }
 ]
 
 RULES:
-timestamp: f64 seconds (NOT MM:SS string)
-timestamp_fmt: MM:SS string (agent MUST provide)
-- timestamp_fmt → pass to --timestamps flag (MM:SS format required by binary)
-- timestamp → internal reference only (do NOT pass to --timestamps)
-- reason: one of [proper_noun, claim, deictic, speaker_id, visual_context, entity, topic_transition, key_argument]
+- timestamp: f64 seconds (NOT MM:SS string)
+- timestamp_fmt: MM:SS string (agent MUST provide — pass to --timestamps)
+- reason: one of [hook_moment, key_argument, claim, entity, visual_context,
+  topic_transition, deictic, speaker_id]
+- hook_type: one of [surprising_statement, question, number, direct_address,
+  emotional_peak, none]
+- impact_score: 1-10 (see scoring rubric above)
+- standalone: true/false (mandatory check)
 - priority: 1 (critical) to 5 (nice-to-have)
 - Spread moments evenly across FULL duration
 - Include moments from beginning, middle, AND end
-- MINIMUM 21 moments required, NO MAXIMUM — scale with video duration and content density
 """
 ```
 
@@ -131,7 +184,7 @@ watch2 "URL" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/wa
 - Binary extracts frames ONLY at these timestamps
 - Each frame gets `reason: "transcript-cue"` metadata
 
-### Step 6: Vision analyze ALL frames (minimum 21, no exceptions — analyze every extracted frame)
+### Step 6: Vision analyze ALL frames (no exceptions — analyze every extracted frame)
 - Analyze every extracted frame
 - Use moment.question for each frame
 - Cross-reference with transcript text
@@ -180,7 +233,7 @@ This video walks through building a REST API using Node.js and Express. The host
 ---
 
 **Example 2: Cross-reference finding**
-The transcript mentions "Ragnarok" at 0:54, but the on-screen text shows "Ragnarök" (with umlaut). This is a common ASR error for Scandinavian names.
+The transcript mentions "OpenAI" at 0:54, but the on-screen text shows "Open AI" (two words). This is a common ASR capitalization variance.
 
 **Example 3: Error case (no transcript)**
 ⚠️ No transcript available for this video. Set GROQ_API_KEY or OPENAI_API_KEY for Whisper transcription.

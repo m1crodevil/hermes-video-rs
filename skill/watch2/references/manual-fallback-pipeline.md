@@ -30,12 +30,12 @@ echo "Duration: ${DURATION}s"
 # 2. List available subtitles
 echo ""
 echo "--- Available Subtitles ---"
-yt-dlp --list-subs "$SOURCE" 2>&1 | grep -E "^(en|id|English|Indonesian)" || true
+yt-dlp --list-subs "$SOURCE" 2>&1 | head -30 || true
 
 # 3. Download subtitles (try multiple strategies)
 echo ""
 echo "--- Downloading Subtitles ---"
-yt-dlp --write-sub --write-auto-sub --sub-lang "id-orig,id,en" \
+yt-dlp --write-sub --write-auto-sub --sub-lang "all" \
   --sub-format json3 --skip-download \
   -o "$WORKDIR/download/video" "$SOURCE" 2>&1 || true
 
@@ -82,11 +82,11 @@ yt-dlp -f "bv*[height<=720]+ba/b[height<=720]/bv+ba/b" \
   -o "$WORKDIR/download/video.mp4" "$SOURCE"
 
 # 6. Extract frames — scene detection first, fall back to uniform
-#    CRITICAL: Minimum 21 frames required for adequate visual coverage
+#    CRITICAL: Minimum 15 frames required for adequate visual coverage (scale with duration)
 echo ""
 echo "--- Extracting Frames ---"
 mkdir -p "$WORKDIR/frames"
-MIN_FRAMES=21
+MIN_FRAMES=15
 
 ffmpeg -i "$WORKDIR/download/video.mp4" \
   -vf "select='gt(scene,0.25)',scale=512:-1" \
@@ -154,8 +154,11 @@ echo "3. Analyze representative frames with vision_analyze"
 
 ## Subtitle Strategy Priority
 
-1. **Manual Indonesian** (`id-orig`): Best quality, but may not exist
-2. **Auto Indonesian** (`id`): Usually available for Indonesian videos
-3. **Auto English** (`en`): Always available, but may lose nuance
+Subtitle language is auto-detected from video metadata. The binary downloads only matching subtitles to avoid rate-limiting.
 
-Always try `--write-sub --write-auto-sub --sub-lang "id-orig,id,en"` to get the best available.
+1. **Manual subs** in detected language: Best quality, may not exist
+2. **Auto-generated subs** in detected language: Usually available
+3. **Manual English**: Always available, may lose nuance for non-English content
+4. **Auto English**: Fallback when no other subs found
+
+The `--sub-lang` flag accepts language codes (e.g., `en`, `id`, `ja`, `es`). When no language is detected, all available subs are downloaded.

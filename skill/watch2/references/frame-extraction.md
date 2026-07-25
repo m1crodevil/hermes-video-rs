@@ -15,7 +15,7 @@ Scene detection (av-scenechange) runs separately and populates `scene_boundaries
 Pass 1: watch2 URL --out-dir /tmp/watch-XXX --output both
          → Transcript + scene boundaries (NO frames)
 
-Agent reads transcript via jq → selects key moments (minimum 21, no maximum)
+Agent reads transcript via jq → selects key moments (scale with duration, see moment-selection.md)
 
 Pass 2: watch2 URL --timestamps "01:45,03:30,..." --keep-video --out-dir /tmp/watch-XXX
          → Frames extracted at agent-selected timestamps only
@@ -30,4 +30,4 @@ Uniform sampling wastes resources and misses key moments:
 
 ## Frame Count Requirement
 
-Minimum 21 frames (MANDATORY). If agent selects fewer than 21 moments, pad with additional timestamps from scene boundaries.
+Minimum 15 frames (scale with duration — see moment-selection.md). If agent selects fewer moments than needed, pad with additional timestamps from scene boundaries.
