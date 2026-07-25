@@ -15,7 +15,7 @@ Scene detection (av-scenechange) runs separately and populates `scene_boundaries
 Pass 1: watch2 URL --out-dir /tmp/watch-XXX --output both
          → Transcript + scene boundaries (NO frames)
 
-Agent reads transcript via jq → selects 21-25 key moments
+Agent reads transcript via jq → selects key moments (minimum 21, no maximum)
 
 Pass 2: watch2 URL --timestamps "01:45,03:30,..." --keep-video --out-dir /tmp/watch-XXX
          → Frames extracted at agent-selected timestamps only

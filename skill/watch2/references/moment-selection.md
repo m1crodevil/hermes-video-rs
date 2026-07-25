@@ -26,7 +26,7 @@ Agent selects key moments using transcript + scene data from report.json:
 7. Speaker identity (speaker changes, identity unclear from transcript)
 8. Entity recognition (brand names, product names, on-screen text)
 
-**Output**: 21-25 timestamps as comma-separated string
+**Output**: Timestamps as comma-separated string (minimum 21, no maximum — longer videos need more moments)
 
 ### Language Detection
 

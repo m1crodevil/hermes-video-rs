@@ -134,7 +134,7 @@ vision_analyze(frame_0021.jpg)  # End
 **CORRECT workflow:**
 ```
 Pass 1: watch2 (gets transcript + scene data, NO frames)
-Step 2: Agent reads report.json via jq → selects 21-25 key moments via LLM
+Step 2: Agent reads report.json via jq → selects key moments via LLM (minimum 21, no maximum)
 Pass 3: watch2 --timestamps "00:30,01:15,..." --keep-video (extract at moments)
 Step 4: vision_analyze all frames → cross-reference → analysis
 ```
@@ -185,7 +185,7 @@ jq '.transcript[].words[] | select(.confidence < 0.5) | {word, start, confidence
 jq '.scene_boundaries[] | select(.inter_cost > 30) | {start_sec, end_sec, inter_cost}' /tmp/watch-XXX/report.json
 ```
 
-**Step 3: Agent selects 21-25 key moments via LLM**
+**Step 3: Agent selects key moments via LLM (minimum 21, no maximum)**
 - Use MOMENT_SELECTION_PROMPT template
 - Include JSON3 transcript sample + scene_boundaries sample
 - Select moments based on:
@@ -256,7 +256,7 @@ String truncation uses `chars().take(N)` instead of byte slicing (`[..N]`). Mult
 **CORRECT workflow** (two-pass):
 ```
 Pass 1: watch2 "URL" → report.json (transcript + scenes, NO frames)
-Agent: reads report.json via jq → selects 21-25 key moments via LLM
+Agent: reads report.json via jq → selects key moments via LLM (minimum 21, no maximum)
 Pass 2: watch2 "URL" --timestamps "..." → extracts frames at key moments
 Agent: vision_analyze all frames → cross-reference → summary
 ```

@@ -13,7 +13,7 @@ The binary runs a **single-pass pipeline**:
 
 **Agent reads report.json via jq, then:**
 - Detects language from transcript
-- Selects 21-25 key moments using transcript + scene data
+- Selects key moments using transcript + scene data (minimum 21, no maximum)
 - Extracts frames at those timestamps via --timestamps flag (Pass 2)
 - Vision analyzes all frames
 - Cross-references transcript × visuals
@@ -65,7 +65,7 @@ ls /tmp/watch-XXX/frames/*.jpg | wc -l
 
 ### Step 4: LLM Select Key Moments (using transcript + scene data)
 
-Agent selects 21-25 key moments using this data:
+Agent selects key moments using this data (minimum 21, no maximum — scale with duration):
 
 ```bash
 # Moment Selection Prompt Template
@@ -85,7 +85,7 @@ TRANSCRIPT:
 SCENE BOUNDARIES:
 {scene_boundaries_sample}
 
-YOUR TASK: Select 21-25 key moments where visual verification would improve accuracy.
+YOUR TASK: Select key moments where visual verification would improve accuracy. Minimum 21, no maximum — longer videos need more moments for comprehensive coverage.
 
 MOMENT SELECTION CRITERIA:
 1. **Proper nouns** — names, brands, titles that might be misspelled in auto-captions
@@ -119,7 +119,7 @@ timestamp_fmt: MM:SS string (agent MUST provide)
 - priority: 1 (critical) to 5 (nice-to-have)
 - Spread moments evenly across FULL duration
 - Include moments from beginning, middle, AND end
-- MINIMUM 21 moments required
+- MINIMUM 21 moments required, NO MAXIMUM — scale with video duration and content density
 """
 ```
 
@@ -131,7 +131,7 @@ watch2 "URL" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/wa
 - Binary extracts frames ONLY at these timestamps
 - Each frame gets `reason: "transcript-cue"` metadata
 
-### Step 6: Vision analyze ALL frames (≥21 minimum, no exceptions)
+### Step 6: Vision analyze ALL frames (minimum 21, no exceptions — analyze every extracted frame)
 - Analyze every extracted frame
 - Use moment.question for each frame
 - Cross-reference with transcript text

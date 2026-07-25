@@ -41,7 +41,7 @@ Rust-powered video analysis. Faster startup (~5ms), smaller memory (~5-15MB), si
 **Binary:** `watch2 "URL" --out-dir /tmp/watch-XXX --output both`
 **Flow:** Run binary (no frames) → Read report.json with jq → Agent selects moments → watch2 --timestamps → Vision analyze → Analysis
 **Flags:** --timestamps, --keep-video, --out-dir, --output, --resolution
-**Minimum frames:** ≥21 (MANDATORY)
+**Minimum frames:** ≥21 (MANDATORY). Scale: short (<10min) ≈21, medium (10-20min) ≈25, long (20min+) ≈30+
 **Transcript required:** Yes — binary exits without it
 **Frame analysis:** Analyze EVERY extracted frame with vision_analyze. NEVER skip frames.
 **Report parsing:** Use `jq` — NEVER Python (`python3`, `execute_code`).
@@ -194,13 +194,13 @@ watch2 "https://youtu.be/abc" --out-dir /tmp/watch-XXX --output both
 jq '{title, uploader, duration, scene_count}' /tmp/watch-XXX/report.json
 jq -r '.transcript[] | "[\(.start) → \(.end)] \(.text)"' /tmp/watch-XXX/report.json
 
-# Pass 2: After agent selects 21-25 key moments
+# Pass 2: After agent selects key moments (minimum 21, no cap)
 watch2 "https://youtu.be/abc" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/watch-XXX
 ```
 
 **Steps:**
 1. Run binary → get report.json (transcript + scene boundaries, NO frames)
-2. Agent reads report.json via jq, selects 21-25 key moments using transcript + scene data
+2. Agent reads report.json via jq, selects key moments using transcript + scene data (minimum 21, no maximum — scale with video duration)
 3. Run binary again with `--timestamps` → extract frames at key moments
 4. Vision analyze ALL extracted frames (minimum 21)
 

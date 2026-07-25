@@ -19,7 +19,7 @@ Agent reads report.json via jq:
 ├── Transcript (JSON3 with word-level timing + confidence)
 ├── Scene boundaries (av-scenechange data)
 ├── Metadata (title, uploader, duration, language)
-└── Selects 21-25 key moments
+└── Selects key moments (minimum 21, no maximum)
 
 Pass 2: Extract frames at agent-selected timestamps
 ├── watch2 "URL" --timestamps "00:30,01:15,..." --keep-video --out-dir /tmp/watch-XXX
