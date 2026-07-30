@@ -291,10 +291,10 @@ pub fn fetch_captions(
             let mut info = extract_info(out_dir);
 
             // Override language from LLM if provided
-            if let Some(lang) = llm_lang {
-                if !lang.is_empty() {
-                    info.language = Some(lang.to_string());
-                }
+            if let Some(lang) = llm_lang
+                && !lang.is_empty()
+            {
+                info.language = Some(lang.to_string());
             }
 
             // Fallback: if no language from metadata, default to English
@@ -459,37 +459,35 @@ pub fn extract_info(dir: &Path) -> VideoInfo {
     // Look for any *.info.json in the directory (video.info.json or <id>.info.json)
     for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let path = entry.path();
-        if path.extension().map_or(false, |e| e == "json")
+        if path.extension().is_some_and(|e| e == "json")
             && path.to_string_lossy().contains("info")
+            && let Ok(content) = std::fs::read_to_string(&path)
+            && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
         {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                    let title = json["title"].as_str().unwrap_or("Unknown").to_string();
-                    let uploader = json["uploader"].as_str().map(|s| s.to_string());
-                    let duration = json["duration"]
-                        .as_f64()
-                        .or_else(|| json["duration"].as_i64().map(|i| i as f64));
-                    let language = json["language"]
-                        .as_str()
-                        .or_else(|| json["language"].as_i64().map(|_| "en"))
-                        .map(|s| s.to_string());
-                    let description = json["description"].as_str().map(|s| {
-                        if s.len() > 500 {
-                            format!("{}…", &s[..500])
-                        } else {
-                            s.to_string()
-                        }
-                    });
-
-                    return VideoInfo {
-                        title,
-                        uploader,
-                        duration,
-                        language,
-                        description,
-                    };
+            let title = json["title"].as_str().unwrap_or("Unknown").to_string();
+            let uploader = json["uploader"].as_str().map(|s| s.to_string());
+            let duration = json["duration"]
+                .as_f64()
+                .or_else(|| json["duration"].as_i64().map(|i| i as f64));
+            let language = json["language"]
+                .as_str()
+                .or_else(|| json["language"].as_i64().map(|_| "en"))
+                .map(|s| s.to_string());
+            let description = json["description"].as_str().map(|s| {
+                if s.len() > 500 {
+                    format!("{}…", &s[..500])
+                } else {
+                    s.to_string()
                 }
-            }
+            });
+
+            return VideoInfo {
+                title,
+                uploader,
+                duration,
+                language,
+                description,
+            };
         }
     }
     VideoInfo::default()
@@ -503,7 +501,7 @@ fn find_video(dir: &Path) -> Option<PathBuf> {
     for ext in &["mp4", "mkv", "webm", "mov", "m4a", "mp3"] {
         for entry in std::fs::read_dir(dir).ok()? {
             let entry = entry.ok()?;
-            if entry.path().extension().map_or(false, |e| e == *ext) {
+            if entry.path().extension().is_some_and(|e| e == *ext) {
                 return Some(entry.path());
             }
         }
@@ -521,7 +519,7 @@ fn find_subtitle(dir: &Path, preferred_lang: &str) -> Option<PathBuf> {
     for ext in &["json3", "vtt"] {
         for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == *ext) {
+            if path.extension().is_some_and(|e| e == *ext) {
                 let name = path.file_name().unwrap().to_string_lossy();
                 // Match patterns like "video.en-orig.json3" or "video.en.json3"
                 // Use base language code for matching (not regional like "en-US")
@@ -532,7 +530,7 @@ fn find_subtitle(dir: &Path, preferred_lang: &str) -> Option<PathBuf> {
         }
     }
     // Preferred language files first, then fall back to any subtitle file
-    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.sort_by_key(|b| std::cmp::Reverse(b.0));
     candidates.into_iter().next().map(|(_, p)| p)
 }
 
@@ -541,10 +539,10 @@ fn find_subtitle(dir: &Path, preferred_lang: &str) -> Option<PathBuf> {
 fn clean_stale_subtitles(dir: &Path) {
     for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let path = entry.path();
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if ext == "json3" || ext == "vtt" {
-                std::fs::remove_file(&path).ok();
-            }
+        if let Some(ext) = path.extension().and_then(|e| e.to_str())
+            && (ext == "json3" || ext == "vtt")
+        {
+            std::fs::remove_file(&path).ok();
         }
     }
 }

@@ -177,11 +177,7 @@ impl SceneBoundary {
         _fps: f64,
         frame_start: u64,
         frame_end: u64,
-        inter_cost: f64,
-        imp_block_cost: f64,
-        backward_adjusted_cost: f64,
-        forward_adjusted_cost: f64,
-        threshold: f64,
+        score: &ScoreDetails,
     ) -> Self {
         Self {
             start_sec,
@@ -189,11 +185,11 @@ impl SceneBoundary {
             duration_sec: end_sec - start_sec,
             frame_start,
             frame_end,
-            inter_cost: Some(inter_cost),
-            imp_block_cost: Some(imp_block_cost),
-            backward_adjusted_cost: Some(backward_adjusted_cost),
-            forward_adjusted_cost: Some(forward_adjusted_cost),
-            threshold: Some(threshold),
+            inter_cost: Some(score.inter_cost),
+            imp_block_cost: Some(score.imp_block_cost),
+            backward_adjusted_cost: Some(score.backward_adjusted_cost),
+            forward_adjusted_cost: Some(score.forward_adjusted_cost),
+            threshold: Some(score.threshold),
         }
     }
 
@@ -313,11 +309,13 @@ fn detect_with_av_scenechange(video_path: &Path, fps: f64) -> Result<SceneDetect
                     fps,
                     frame as u64,
                     frame_end as u64,
-                    score.inter_cost,
-                    score.imp_block_cost,
-                    score.backward_adjusted_cost,
-                    score.forward_adjusted_cost,
-                    score.threshold,
+                    &ScoreDetails {
+                        inter_cost: score.inter_cost,
+                        imp_block_cost: score.imp_block_cost,
+                        backward_adjusted_cost: score.backward_adjusted_cost,
+                        forward_adjusted_cost: score.forward_adjusted_cost,
+                        threshold: score.threshold,
+                    },
                 )
             } else {
                 SceneBoundary::new(start_sec, end_sec, fps, frame as u64, frame_end as u64)
@@ -347,11 +345,13 @@ mod tests {
             24.0,
             (start * 24.0) as u64,
             (end * 24.0) as u64,
-            inter,
-            imp,
-            back,
-            fwd,
-            0.15,
+            &ScoreDetails {
+                inter_cost: inter,
+                imp_block_cost: imp,
+                backward_adjusted_cost: back,
+                forward_adjusted_cost: fwd,
+                threshold: 0.15,
+            },
         )
     }
 
@@ -445,7 +445,20 @@ mod tests {
 
     #[test]
     fn test_significance_calculation() {
-        let b = SceneBoundary::with_score(0.0, 10.0, 24.0, 0, 240, 0.1, 0.05, 0.08, 0.12, 0.15);
+        let b = SceneBoundary::with_score(
+            0.0,
+            10.0,
+            24.0,
+            0,
+            240,
+            &ScoreDetails {
+                inter_cost: 0.1,
+                imp_block_cost: 0.05,
+                backward_adjusted_cost: 0.08,
+                forward_adjusted_cost: 0.12,
+                threshold: 0.15,
+            },
+        );
         let sig = b.significance();
         // significance = inter_cost + imp_block_cost * 10 + backward + forward
         // = 0.1 + 0.05*10 + 0.08 + 0.12 = 0.1 + 0.5 + 0.08 + 0.12 = 0.8
@@ -483,11 +496,18 @@ mod tests {
     #[test]
     fn significance_all_scores_weighted_sum() {
         let b = SceneBoundary::with_score(
-            0.0, 10.0, 24.0, 0, 240, 0.1,  // inter_cost
-            0.05, // imp_block_cost
-            0.08, // backward_adjusted_cost
-            0.12, // forward_adjusted_cost
-            0.15, // threshold (not in formula)
+            0.0,
+            10.0,
+            24.0,
+            0,
+            240,
+            &ScoreDetails {
+                inter_cost: 0.1,
+                imp_block_cost: 0.05,
+                backward_adjusted_cost: 0.08,
+                forward_adjusted_cost: 0.12,
+                threshold: 0.15,
+            },
         );
         // inter + imp*10 + backward + forward = 0.1 + 0.5 + 0.08 + 0.12 = 0.8
         let sig = b.significance();
@@ -657,11 +677,18 @@ mod tests {
     #[test]
     fn test_boundary_with_score_populates_all_fields() {
         let b = SceneBoundary::with_score(
-            10.0, 30.0, 24.0, 240, 720, 0.1,  // inter_cost
-            0.05, // imp_block_cost
-            0.08, // backward_adjusted_cost
-            0.12, // forward_adjusted_cost
-            0.15, // threshold
+            10.0,
+            30.0,
+            24.0,
+            240,
+            720,
+            &ScoreDetails {
+                inter_cost: 0.1,
+                imp_block_cost: 0.05,
+                backward_adjusted_cost: 0.08,
+                forward_adjusted_cost: 0.12,
+                threshold: 0.15,
+            },
         );
 
         assert!((b.duration_sec - 20.0).abs() < 0.001);

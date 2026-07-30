@@ -21,7 +21,7 @@ pub fn extract_at_timestamps(
             let entry = entry?;
             let p = entry.path();
             if p.file_stem()
-                .map_or(false, |s| s.to_string_lossy().starts_with("cue_"))
+                .is_some_and(|s| s.to_string_lossy().starts_with("cue_"))
             {
                 let _ = std::fs::remove_file(&p);
             }

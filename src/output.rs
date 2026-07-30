@@ -115,24 +115,24 @@ impl WatchReport {
             }
             out.push('\n');
         }
-        if let Some(ref moments) = self.key_moments {
-            if !moments.is_empty() {
-                out.push_str(&format!("## Key Moments ({})\n\n", moments.len()));
-                for m in moments {
-                    let ts = m.get("timestamp").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    let word = m.get("word").and_then(|v| v.as_str()).unwrap_or("?");
-                    let reason = m.get("reason").and_then(|v| v.as_str()).unwrap_or("?");
-                    let priority = m.get("priority").and_then(|v| v.as_u64()).unwrap_or(3);
-                    out.push_str(&format!(
-                        "- `[{}]` P{} `{}` ({})\n",
-                        format_time(ts),
-                        priority,
-                        word,
-                        reason
-                    ));
-                }
-                out.push('\n');
+        if let Some(ref moments) = self.key_moments
+            && !moments.is_empty()
+        {
+            out.push_str(&format!("## Key Moments ({})\n\n", moments.len()));
+            for m in moments {
+                let ts = m.get("timestamp").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let word = m.get("word").and_then(|v| v.as_str()).unwrap_or("?");
+                let reason = m.get("reason").and_then(|v| v.as_str()).unwrap_or("?");
+                let priority = m.get("priority").and_then(|v| v.as_u64()).unwrap_or(3);
+                out.push_str(&format!(
+                    "- `[{}]` P{} `{}` ({})\n",
+                    format_time(ts),
+                    priority,
+                    word,
+                    reason
+                ));
             }
+            out.push('\n');
         }
         if self.frames.is_empty() && self.transcript.is_empty() {
             out.push_str("*No frames or transcript available.*\n");

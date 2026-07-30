@@ -69,8 +69,8 @@ fn check_api_key(env_file: &Path) -> bool {
             }
             let key = line.split('=').next().unwrap_or("").trim();
             let val = line
-                .splitn(2, '=')
-                .nth(1)
+                .split_once('=')
+                .map(|x| x.1)
                 .unwrap_or("")
                 .trim()
                 .trim_matches('"')

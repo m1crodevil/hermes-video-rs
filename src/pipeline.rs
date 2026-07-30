@@ -7,7 +7,7 @@ use crate::output::{FrameInfo, WatchReport};
 use crate::timestamp;
 use crate::transcript;
 use crate::whisper;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct PipelineContext {
     pub cli: cli::Cli,
@@ -233,7 +233,7 @@ fn detect_language_quick(url: &str, use_cookies: bool) -> Option<String> {
 
 async fn run_whisper_fallback(
     config: &WatchConfig,
-    work: &PathBuf,
+    work: &Path,
     video_path: &Option<PathBuf>,
     segments: &mut Vec<crate::output::TranscriptSegment>,
     source: &mut String,
@@ -276,41 +276,37 @@ fn ensure_resources(
     std::fs::create_dir_all(download_dir)?;
 
     // Cache hit
-    if !no_cache {
-        if let Some(c) = cache {
-            if let Some(cached) = c.get_video(source) {
-                if cached.exists()
-                    && cached
-                        .metadata()
-                        .map(|m| m.len() > 1_000_000)
-                        .unwrap_or(false)
-                {
-                    eprintln!("[watch2] ✓ video from cache");
-                    let dest = download_dir.join("video.mp4");
-                    std::fs::copy(&cached, &dest)?;
-                    let info = c.get_info(source).unwrap_or_default();
-                    let sub = c
-                        .get_subtitles(source, &info.language.clone().unwrap_or_default())
-                        .and_then(|sp| {
-                            let d =
-                                download_dir.join(sp.file_name()?.to_string_lossy().to_string());
-                            std::fs::copy(&sp, &d).ok()?;
-                            Some(d)
-                        });
-                    let bounds = detect_scenes(&dest, info.duration.unwrap_or(0.0));
-                    return Ok((
-                        crate::download::DownloadResult {
-                            video_path: Some(dest),
-                            subtitle_path: sub,
-                            title: info.title.clone(),
-                            info,
-                            downloaded: false,
-                        },
-                        bounds,
-                    ));
-                }
-            }
-        }
+    if !no_cache
+        && let Some(c) = cache
+        && let Some(cached) = c.get_video(source)
+        && cached.exists()
+        && cached
+            .metadata()
+            .map(|m| m.len() > 1_000_000)
+            .unwrap_or(false)
+    {
+        eprintln!("[watch2] ✓ video from cache");
+        let dest = download_dir.join("video.mp4");
+        std::fs::copy(&cached, &dest)?;
+        let info = c.get_info(source).unwrap_or_default();
+        let sub = c
+            .get_subtitles(source, &info.language.clone().unwrap_or_default())
+            .and_then(|sp| {
+                let d = download_dir.join(sp.file_name()?.to_string_lossy().to_string());
+                std::fs::copy(&sp, &d).ok()?;
+                Some(d)
+            });
+        let bounds = detect_scenes(&dest, info.duration.unwrap_or(0.0));
+        return Ok((
+            crate::download::DownloadResult {
+                video_path: Some(dest),
+                subtitle_path: sub,
+                title: info.title.clone(),
+                info,
+                downloaded: false,
+            },
+            bounds,
+        ));
     }
 
     // Download with retry
@@ -364,17 +360,17 @@ fn ensure_resources(
 }
 
 fn cleanup(cli: &cli::Cli, work: &PathBuf, video_path: &Option<PathBuf>) {
-    if !cli.keep_video {
-        if let Some(vp) = video_path {
-            if vp.starts_with(work) && vp.exists() {
-                let mb = std::fs::metadata(vp)
-                    .map(|m| m.len() / (1024 * 1024))
-                    .unwrap_or(0);
-                std::fs::remove_file(vp).ok();
-                if mb > 0 {
-                    eprintln!("[watch2] cleaned up video ({} MB)", mb);
-                }
-            }
+    if !cli.keep_video
+        && let Some(vp) = video_path
+        && vp.starts_with(work)
+        && vp.exists()
+    {
+        let mb = std::fs::metadata(vp)
+            .map(|m| m.len() / (1024 * 1024))
+            .unwrap_or(0);
+        std::fs::remove_file(vp).ok();
+        if mb > 0 {
+            eprintln!("[watch2] cleaned up video ({} MB)", mb);
         }
     }
     // Clean up audio artifact
@@ -387,7 +383,7 @@ fn cleanup(cli: &cli::Cli, work: &PathBuf, video_path: &Option<PathBuf>) {
 #[allow(clippy::too_many_arguments)]
 fn build_report(
     cli: &cli::Cli,
-    work: &PathBuf,
+    work: &Path,
     dl: &download::DownloadResult,
     frames: Vec<FrameInfo>,
     frames_dropped: u32,

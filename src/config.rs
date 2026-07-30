@@ -57,14 +57,11 @@ pub fn suggest_subtitle_language(
     available_auto: &[String],
     llm_detected: Option<&str>,
 ) -> String {
-    if let Some(lang) = llm_detected {
-        if !lang.is_empty() {
-            if available_manual.iter().any(|l| l == lang)
-                || available_auto.iter().any(|l| l == lang)
-            {
-                return lang.to_string();
-            }
-        }
+    if let Some(lang) = llm_detected
+        && !lang.is_empty()
+        && (available_manual.iter().any(|l| l == lang) || available_auto.iter().any(|l| l == lang))
+    {
+        return lang.to_string();
     }
 
     let vid_lang = video_language.unwrap_or("en");

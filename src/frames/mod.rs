@@ -31,9 +31,7 @@ pub(crate) fn even_indices(count: usize, n: usize) -> Vec<usize> {
     if n <= 1 {
         return vec![0];
     }
-    (0..n)
-        .map(|i| (i * (count - 1) / (n - 1)) as usize)
-        .collect()
+    (0..n).map(|i| i * (count - 1) / (n - 1)).collect()
 }
 
 pub(crate) fn scale_filter(resolution: u32) -> String {

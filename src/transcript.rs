@@ -68,7 +68,7 @@ pub fn parse_vtt(content: &str) -> Result<Vec<TranscriptSegment>> {
                 let start = parse_vtt_time(parts[0].trim());
                 let end = parse_vtt_time(parts[1].trim());
                 let mut text = String::new();
-                while let Some(next) = lines.next() {
+                for next in lines.by_ref() {
                     if next.trim().is_empty() {
                         break;
                     }
@@ -114,7 +114,7 @@ fn dedupe(segments: Vec<TranscriptSegment>) -> Vec<TranscriptSegment> {
     for seg in segments {
         if out
             .last()
-            .map_or(false, |s: &TranscriptSegment| s.text == seg.text)
+            .is_some_and(|s: &TranscriptSegment| s.text == seg.text)
         {
             continue;
         }

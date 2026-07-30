@@ -16,15 +16,13 @@ async fn main() -> anyhow::Result<()> {
 
     // Early preflight check
     let setup_status = setup::check();
-    if !setup_status.can_proceed {
-        if !setup_status.missing_binaries.is_empty() {
-            eprintln!(
-                "❌ Missing required binaries: {}",
-                setup_status.missing_binaries.join(", ")
-            );
-            eprintln!("   Install: apt install ffmpeg  (Linux)");
-            std::process::exit(3);
-        }
+    if !setup_status.can_proceed && !setup_status.missing_binaries.is_empty() {
+        eprintln!(
+            "❌ Missing required binaries: {}",
+            setup_status.missing_binaries.join(", ")
+        );
+        eprintln!("   Install: apt install ffmpeg  (Linux)");
+        std::process::exit(3);
     }
     // API key check — warning only, not a blocker
     if !setup_status.has_api_key && !cli.no_whisper {
