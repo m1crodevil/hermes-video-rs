@@ -32,3 +32,5 @@ local-whisper = ["whisper-rs"]
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
+wiremock = "0.6"
+mockall = "0.13"

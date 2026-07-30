@@ -212,6 +212,51 @@ pub fn extract_audio(video_path: &Path, out_dir: &Path) -> Result<std::path::Pat
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::NamedTempFile;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    // ── Mock Provider for wiremock tests ──────────────────────────────
+
+    /// A mock WhisperProvider that points at a wiremock MockServer URL.
+    struct MockWhisperProvider {
+        endpoint_url: String,
+        model_id: String,
+    }
+
+    #[async_trait]
+    impl WhisperProvider for MockWhisperProvider {
+        fn name(&self) -> &str {
+            "MockGroq"
+        }
+
+        fn endpoint(&self) -> &str {
+            &self.endpoint_url
+        }
+
+        fn model(&self) -> &str {
+            &self.model_id
+        }
+    }
+
+    impl MockWhisperProvider {
+        fn new(server: &MockServer) -> Self {
+            let endpoint_url = format!("{}/openai/v1/audio/transcriptions", server.uri());
+            Self {
+                endpoint_url,
+                model_id: "whisper-large-v3".to_string(),
+            }
+        }
+    }
+
+    /// Create a small temp file with fake audio bytes.
+    fn create_temp_audio() -> NamedTempFile {
+        let file = NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), b"fake-audio-bytes-for-testing").unwrap();
+        file
+    }
+
+    // ── Provider unit tests ───────────────────────────────────────────
 
     #[test]
     fn test_provider_names() {
@@ -241,8 +286,10 @@ mod tests {
         assert_eq!(p.name(), "OpenAI"); // default
     }
 
+    // ── parse_response unit tests ─────────────────────────────────────
+
     #[test]
-    fn test_parse_response_with_segments() {
+    fn test_parse_response_segments() {
         let json = serde_json::json!({
             "segments": [
                 {"start": 0.0, "end": 1.5, "text": "Hello world"},
@@ -252,7 +299,14 @@ mod tests {
         let segs = parse_response(&json).unwrap();
         assert_eq!(segs.len(), 2);
         assert_eq!(segs[0].text, "Hello world");
+        assert_eq!(segs[0].start, 0.0);
+        assert_eq!(segs[0].end, 1.5);
+        assert_eq!(segs[1].text, "How are you?");
         assert_eq!(segs[1].start, 1.5);
+        assert_eq!(segs[1].end, 3.0);
+        // words should be None
+        assert!(segs[0].words.is_none());
+        assert!(segs[1].words.is_none());
     }
 
     #[test]
@@ -264,5 +318,159 @@ mod tests {
         assert_eq!(segs.len(), 1);
         assert_eq!(segs[0].text, "Just a single text block");
         assert_eq!(segs[0].start, 0.0);
+        assert_eq!(segs[0].end, 0.0);
+        assert!(segs[0].words.is_none());
+    }
+
+    #[test]
+    fn test_parse_response_empty_segments() {
+        let json = serde_json::json!({
+            "segments": []
+        });
+        let segs = parse_response(&json).unwrap();
+        assert_eq!(segs.len(), 0);
+    }
+
+    // ── Wiremock integration tests ────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_transcribe_success() {
+        let server = MockServer::start().await;
+        let provider = MockWhisperProvider::new(&server);
+
+        let response_body = serde_json::json!({
+            "segments": [
+                {"start": 0.0, "end": 2.0, "text": "Hello from Groq"},
+                {"start": 2.0, "end": 4.5, "text": "This is a test"}
+            ]
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/openai/v1/audio/transcriptions"))
+            .and(header("Authorization", "Bearer test-api-key"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(response_body)
+                    .insert_header("content-type", "application/json"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let audio_file = create_temp_audio();
+        let segments = provider
+            .transcribe(audio_file.path(), "test-api-key")
+            .await
+            .unwrap();
+
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].text, "Hello from Groq");
+        assert_eq!(segments[0].start, 0.0);
+        assert_eq!(segments[0].end, 2.0);
+        assert_eq!(segments[1].text, "This is a test");
+        assert_eq!(segments[1].start, 2.0);
+        assert_eq!(segments[1].end, 4.5);
+    }
+
+    #[tokio::test]
+    async fn test_transcribe_rate_limit_retry() {
+        let server = MockServer::start().await;
+        let provider = MockWhisperProvider::new(&server);
+
+        let success_body = serde_json::json!({
+            "segments": [
+                {"start": 0.0, "end": 1.0, "text": "Retry succeeded"}
+            ]
+        });
+
+        // First request: 429 with Retry-After: 0
+        Mock::given(method("POST"))
+            .and(path("/openai/v1/audio/transcriptions"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("Retry-After", "0")
+                    .set_body_string("rate limited"),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        // Second request: 200 OK
+        Mock::given(method("POST"))
+            .and(path("/openai/v1/audio/transcriptions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(success_body)
+                    .insert_header("content-type", "application/json"),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        let audio_file = create_temp_audio();
+        let segments = provider
+            .transcribe(audio_file.path(), "test-api-key")
+            .await
+            .unwrap();
+
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].text, "Retry succeeded");
+    }
+
+    #[tokio::test]
+    async fn test_transcribe_rate_limit_exhausted() {
+        let server = MockServer::start().await;
+        let provider = MockWhisperProvider::new(&server);
+
+        // All attempts return 429 (MAX_RETRIES + 1 = 5 attempts)
+        Mock::given(method("POST"))
+            .and(path("/openai/v1/audio/transcriptions"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("Retry-After", "0")
+                    .set_body_string("rate limited"),
+            )
+            .expect(5) // 0..=MAX_RETRIES = 5 attempts
+            .mount(&server)
+            .await;
+
+        let audio_file = create_temp_audio();
+        let err_msg = match provider.transcribe(audio_file.path(), "test-api-key").await {
+            Ok(_) => panic!("expected rate limit error"),
+            Err(e) => e.to_string(),
+        };
+
+        assert!(
+            err_msg.contains("rate limit exceeded"),
+            "Error should mention rate limit: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("4 retries"),
+            "Error should mention retry count: {err_msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_transcribe_server_error() {
+        let server = MockServer::start().await;
+        let provider = MockWhisperProvider::new(&server);
+
+        Mock::given(method("POST"))
+            .and(path("/openai/v1/audio/transcriptions"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("internal server error"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let audio_file = create_temp_audio();
+        let err_msg = match provider.transcribe(audio_file.path(), "test-api-key").await {
+            Ok(_) => panic!("expected server error"),
+            Err(e) => e.to_string(),
+        };
+
+        assert!(
+            err_msg.contains("HTTP 500"),
+            "Error should mention HTTP 500: {err_msg}"
+        );
     }
 }
