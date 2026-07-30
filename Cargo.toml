@@ -34,3 +34,13 @@ assert_cmd = "2"
 predicates = "3"
 wiremock = "0.6"
 mockall = "0.13"
+
+[package.metadata.tarpaulin]
+exclude-files = ["tests/*", "examples/*", "src/main.rs"]
+include-files = ["src/**/*.rs"]
+out = ["html", "lcov"]
+fail-under = 70
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
