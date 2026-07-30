@@ -868,4 +868,125 @@ mod tests {
     fn test_is_url_flag() {
         assert!(!is_url("--no-playlist"));
     }
+
+    // ── extract_info tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_extract_info_valid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let info = serde_json::json!({
+            "title": "Test Video",
+            "uploader": "TestChannel",
+            "duration": 120.5,
+            "language": "en",
+            "description": "A great video about testing."
+        });
+        std::fs::write(dir.path().join("video.info.json"), info.to_string()).unwrap();
+
+        let result = extract_info(dir.path());
+        assert_eq!(result.title, "Test Video");
+        assert_eq!(result.uploader.as_deref(), Some("TestChannel"));
+        assert_eq!(result.duration, Some(120.5));
+        assert_eq!(result.language.as_deref(), Some("en"));
+        assert_eq!(
+            result.description.as_deref(),
+            Some("A great video about testing.")
+        );
+    }
+
+    #[test]
+    fn test_extract_info_missing_optional_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let info = serde_json::json!({ "title": "Minimal" });
+        std::fs::write(dir.path().join("video.info.json"), info.to_string()).unwrap();
+
+        let result = extract_info(dir.path());
+        assert_eq!(result.title, "Minimal");
+        assert!(result.uploader.is_none());
+        assert!(result.duration.is_none());
+        assert!(result.language.is_none());
+        assert!(result.description.is_none());
+    }
+
+    #[test]
+    fn test_extract_info_description_truncated_at_500() {
+        let dir = tempfile::tempdir().unwrap();
+        let long_desc = "x".repeat(600);
+        let info = serde_json::json!({
+            "title": "LongDesc",
+            "description": long_desc
+        });
+        std::fs::write(dir.path().join("video.info.json"), info.to_string()).unwrap();
+
+        let result = extract_info(dir.path());
+        let desc = result.description.unwrap();
+        // "…" is 3 bytes in UTF-8 (U+2026), so 500 + 3 = 503 bytes
+        assert_eq!(desc.len(), 503);
+        assert!(desc.ends_with('…'));
+    }
+
+    #[test]
+    fn test_extract_info_empty_json_returns_default() {
+        let dir = tempfile::tempdir().unwrap();
+        // Empty object — title defaults to "Unknown", everything else None
+        std::fs::write(dir.path().join("video.info.json"), "{}").unwrap();
+
+        let result = extract_info(dir.path());
+        assert_eq!(result.title, "Unknown");
+        assert!(result.uploader.is_none());
+        assert!(result.duration.is_none());
+    }
+
+    #[test]
+    fn test_extract_info_non_json_returns_default() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("video.info.json"), "not valid json {{{").unwrap();
+
+        let result = extract_info(dir.path());
+        // Non-JSON falls through to default
+        assert_eq!(result.title, "Unknown");
+        assert!(result.uploader.is_none());
+    }
+
+    // ── resolve_local tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_resolve_local_mp4_returns_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test_video.mp4");
+        std::fs::write(&file, b"fake").unwrap();
+
+        let result = resolve_local(file.to_str().unwrap()).unwrap();
+        assert!(result.video_path.is_some());
+        let vp = result.video_path.unwrap();
+        assert_eq!(vp.file_name().unwrap(), "test_video.mp4");
+    }
+
+    #[test]
+    fn test_resolve_local_unsupported_extension_succeeds_with_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test_video.xyz");
+        std::fs::write(&file, b"fake").unwrap();
+
+        // Unsupported extension just warns, does NOT return error
+        let result = resolve_local(file.to_str().unwrap());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_resolve_local_no_extension_succeeds_with_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test_video");
+        std::fs::write(&file, b"fake").unwrap();
+
+        // No extension just warns, does NOT return error
+        let result = resolve_local(file.to_str().unwrap());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_resolve_local_nonexistent_path_returns_error() {
+        let result = resolve_local("/nonexistent/path/video.mp4");
+        assert!(result.is_err());
+    }
 }

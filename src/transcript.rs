@@ -150,3 +150,263 @@ pub fn parse_subtitle_file(path: &Path) -> Result<Vec<TranscriptSegment>> {
         ))),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── parse_json3 tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_json3_word_level_timing() {
+        let json = serde_json::json!({
+            "events": [{
+                "tStartMs": 1000,
+                "dDurationMs": 2000,
+                "segs": [
+                    { "utf8": "Hello", "tOffsetMs": 0, "acAsrConf": 95 },
+                    { "utf8": "world", "tOffsetMs": 400, "acAsrConf": 90 }
+                ]
+            }]
+        });
+        let segs = parse_json3(&json.to_string()).unwrap();
+        assert_eq!(segs.len(), 1);
+        // No space seg in data, so text is concatenated without separator
+        assert_eq!(segs[0].text, "Helloworld");
+        assert!((segs[0].start - 1.0).abs() < 0.001);
+        assert!((segs[0].end - 3.0).abs() < 0.001);
+
+        let words = segs[0].words.as_ref().unwrap();
+        // Whitespace-only segs are trimmed and filtered out
+        assert_eq!(words.len(), 2);
+        assert_eq!(words[0].word, "Hello");
+        assert_eq!(words[0].confidence, 95);
+        assert!((words[0].start - 1.0).abs() < 0.001);
+        assert_eq!(words[1].word, "world");
+        assert_eq!(words[1].confidence, 90);
+        // word start = (tStartMs + tOffsetMs) / 1000
+        assert!((words[1].start - 1.4).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_parse_json3_events_with_no_segs_skipped() {
+        let json = serde_json::json!({
+            "events": [
+                { "tStartMs": 0, "dDurationMs": 1000 },
+                { "tStartMs": 1000, "dDurationMs": 1000, "segs": [
+                    { "utf8": "only event" }
+                ]}
+            ]
+        });
+        let segs = parse_json3(&json.to_string()).unwrap();
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].text, "only event");
+    }
+
+    #[test]
+    fn test_parse_json3_whitespace_only_filtered() {
+        let json = serde_json::json!({
+            "events": [
+                { "tStartMs": 0, "dDurationMs": 500, "segs": [{ "utf8": "   " }] },
+                { "tStartMs": 500, "dDurationMs": 500, "segs": [{ "utf8": "\n" }] },
+                { "tStartMs": 1000, "dDurationMs": 500, "segs": [{ "utf8": "real text" }] }
+            ]
+        });
+        let segs = parse_json3(&json.to_string()).unwrap();
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].text, "real text");
+    }
+
+    // ── parse_vtt tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_vtt_comma_separator() {
+        let vtt = "\
+WEBVTT
+
+00:00:01,500 --> 00:00:03,000
+Hello world
+
+00:00:04,000 --> 00:00:06,000
+Second cue
+";
+        let segs = parse_vtt(vtt).unwrap();
+        assert_eq!(segs.len(), 2);
+        assert!((segs[0].start - 1.5).abs() < 0.001);
+        assert!((segs[0].end - 3.0).abs() < 0.001);
+        assert_eq!(segs[0].text, "Hello world");
+        assert_eq!(segs[1].text, "Second cue");
+    }
+
+    #[test]
+    fn test_parse_vtt_no_header() {
+        // No WEBVTT header — should still parse
+        let vtt = "\
+00:00:00.000 --> 00:00:02.000
+No header here
+";
+        let segs = parse_vtt(vtt).unwrap();
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].text, "No header here");
+    }
+
+    #[test]
+    fn test_parse_vtt_empty_cue_skipped() {
+        let vtt = "\
+WEBVTT
+
+00:00:00.000 --> 00:00:02.000
+Text here
+
+00:00:03.000 --> 00:00:05.000
+
+00:00:06.000 --> 00:00:08.000
+Also here
+";
+        let segs = parse_vtt(vtt).unwrap();
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].text, "Text here");
+        assert_eq!(segs[1].text, "Also here");
+    }
+
+    // ── filter_by_range tests ────────────────────────────────────────
+
+    #[test]
+    fn test_filter_by_range_overlapping_filtered() {
+        // Segments: [1.0-2.0], [3.0-4.0], [5.0-6.0]
+        // Filter [2.5-4.5] — only [3.0-4.0] overlaps
+        let segs = vec![
+            TranscriptSegment {
+                start: 1.0,
+                end: 2.0,
+                text: "a".into(),
+                words: None,
+            },
+            TranscriptSegment {
+                start: 3.0,
+                end: 4.0,
+                text: "b".into(),
+                words: None,
+            },
+            TranscriptSegment {
+                start: 5.0,
+                end: 6.0,
+                text: "c".into(),
+                words: None,
+            },
+        ];
+        let result = filter_by_range(&segs, Some(2.5), Some(4.5));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].text, "b");
+    }
+
+    #[test]
+    fn test_filter_by_range_exact_boundary_included() {
+        // Segments touching exact boundaries of [2.0, 3.0] should be included
+        let segs = vec![
+            TranscriptSegment {
+                start: 0.5,
+                end: 1.5,
+                text: "before".into(),
+                words: None,
+            },
+            TranscriptSegment {
+                start: 2.0,
+                end: 2.5,
+                text: "at-start".into(),
+                words: None,
+            },
+            TranscriptSegment {
+                start: 2.5,
+                end: 3.0,
+                text: "at-end".into(),
+                words: None,
+            },
+            TranscriptSegment {
+                start: 3.5,
+                end: 4.0,
+                text: "after".into(),
+                words: None,
+            },
+        ];
+        let result = filter_by_range(&segs, Some(2.0), Some(3.0));
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].text, "at-start");
+        assert_eq!(result[1].text, "at-end");
+    }
+
+    #[test]
+    fn test_filter_by_range_both_none_returns_all() {
+        let segs = vec![
+            TranscriptSegment {
+                start: 0.0,
+                end: 1.0,
+                text: "a".into(),
+                words: None,
+            },
+            TranscriptSegment {
+                start: 2.0,
+                end: 3.0,
+                text: "b".into(),
+                words: None,
+            },
+        ];
+        let result = filter_by_range(&segs, None, None);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_by_range_no_segments_match() {
+        let segs = vec![TranscriptSegment {
+            start: 1.0,
+            end: 2.0,
+            text: "a".into(),
+            words: None,
+        }];
+        let result = filter_by_range(&segs, Some(10.0), Some(20.0));
+        assert!(result.is_empty());
+    }
+
+    // ── parse_subtitle_file tests ────────────────────────────────────
+
+    #[test]
+    fn test_parse_subtitle_file_json3_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("subs.json3");
+        let json = serde_json::json!({
+            "events": [{ "tStartMs": 0, "dDurationMs": 1000, "segs": [{ "utf8": "hi" }] }]
+        });
+        std::fs::write(&path, json.to_string()).unwrap();
+
+        let result = parse_subtitle_file(&path).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].text, "hi");
+    }
+
+    #[test]
+    fn test_parse_subtitle_file_vtt_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("subs.vtt");
+        let vtt = "\
+WEBVTT
+
+00:00:00.000 --> 00:00:01.000
+Hello
+";
+        std::fs::write(&path, vtt).unwrap();
+
+        let result = parse_subtitle_file(&path).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].text, "Hello");
+    }
+
+    #[test]
+    fn test_parse_subtitle_file_srt_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("subs.srt");
+        std::fs::write(&path, "1\n00:00:00,000 --> 00:00:01,000\nHello\n").unwrap();
+
+        let result = parse_subtitle_file(&path);
+        assert!(result.is_err());
+    }
+}

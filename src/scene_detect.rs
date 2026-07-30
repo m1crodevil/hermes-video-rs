@@ -528,4 +528,170 @@ mod tests {
             assert!(bounds[i].start_sec >= bounds[i - 1].start_sec);
         }
     }
+
+    // ─── T2: Filesystem-based tests for write_scene_scores ──────────────────
+
+    #[test]
+    fn test_write_scene_scores_valid_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scene_scores.json");
+
+        let boundaries = vec![
+            make_boundary(0.0, 15.0, 0.6),
+            make_boundary(15.0, 35.0, 0.9),
+        ];
+
+        let frame_timestamps = vec![
+            ("frame_0001.jpg".to_string(), 7.5),
+            ("frame_0002.jpg".to_string(), 25.0),
+        ];
+
+        write_scene_scores(&boundaries, &frame_timestamps, 35.0, 24.0, 200, &path).unwrap();
+
+        // Verify file exists on disk
+        assert!(path.exists(), "JSON file should be created on disk");
+
+        // Parse it back and verify structure
+        let content = std::fs::read_to_string(&path).unwrap();
+        let output: SceneScoresOutput = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(output.video_duration, 35.0);
+        assert_eq!(output.fps, 24.0);
+        assert_eq!(output.total_scenes, 2);
+        assert_eq!(output.detection_time_ms, 200);
+        assert_eq!(output.scenes.len(), 2);
+        assert_eq!(output.frame_scores.len(), 2);
+
+        // Verify scene content round-trips correctly
+        assert!((output.scenes[0].start_sec - 0.0).abs() < 0.001);
+        assert!((output.scenes[0].end_sec - 15.0).abs() < 0.001);
+        assert!((output.scenes[1].start_sec - 15.0).abs() < 0.001);
+        assert!((output.scenes[1].end_sec - 35.0).abs() < 0.001);
+
+        // Verify frame_scores point to correct scenes
+        assert_eq!(output.frame_scores[0].scene_index, 0);
+        assert_eq!(output.frame_scores[1].scene_index, 1);
+    }
+
+    #[test]
+    fn test_write_scene_scores_empty_boundaries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scene_scores.json");
+
+        let boundaries: Vec<SceneBoundary> = vec![];
+        let frame_timestamps: Vec<(String, f64)> = vec![("orphan.jpg".to_string(), 5.0)];
+
+        write_scene_scores(&boundaries, &frame_timestamps, 60.0, 30.0, 0, &path).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let output: SceneScoresOutput = serde_json::from_str(&content).unwrap();
+
+        // Empty boundaries → empty scenes array
+        assert!(
+            output.scenes.is_empty(),
+            "scenes array should be empty when no boundaries"
+        );
+        assert_eq!(output.total_scenes, 0);
+        // Frame with no matching boundary gets Unknown position
+        assert_eq!(output.frame_scores.len(), 1);
+        assert_eq!(output.frame_scores[0].scene_position, "Unknown");
+    }
+
+    #[test]
+    fn test_write_scene_scores_json_has_required_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scene_scores.json");
+
+        let boundaries = vec![make_boundary(0.0, 10.0, 0.5)];
+        let frame_timestamps = vec![("f.jpg".to_string(), 5.0)];
+
+        write_scene_scores(&boundaries, &frame_timestamps, 10.0, 24.0, 50, &path).unwrap();
+
+        // Read raw JSON to verify top-level keys are present
+        let raw: serde_json::Value = {
+            let content = std::fs::read_to_string(&path).unwrap();
+            serde_json::from_str(&content).unwrap()
+        };
+
+        assert!(
+            raw.get("video_duration").is_some(),
+            "JSON must contain 'video_duration'"
+        );
+        assert!(raw.get("fps").is_some(), "JSON must contain 'fps'");
+        assert!(raw.get("scenes").is_some(), "JSON must contain 'scenes'");
+        assert!(raw["scenes"].is_array(), "'scenes' must be an array");
+        assert!(
+            raw.get("frame_scores").is_some(),
+            "JSON must contain 'frame_scores'"
+        );
+        assert!(
+            raw["frame_scores"].is_array(),
+            "'frame_scores' must be an array"
+        );
+    }
+
+    // ─── T2: Tests for SceneBoundary ────────────────────────────────────────
+
+    #[test]
+    fn test_boundary_new_duration_calculation() {
+        let b = SceneBoundary::new(5.0, 20.0, 24.0, 120, 480);
+        assert!(
+            (b.duration_sec - 15.0).abs() < 0.001,
+            "duration_sec should equal end_sec - start_sec"
+        );
+
+        // All score fields should be None
+        assert!(b.inter_cost.is_none());
+        assert!(b.imp_block_cost.is_none());
+        assert!(b.backward_adjusted_cost.is_none());
+        assert!(b.forward_adjusted_cost.is_none());
+        assert!(b.threshold.is_none());
+
+        // Boundary values
+        assert!((b.start_sec - 5.0).abs() < 0.001);
+        assert!((b.end_sec - 20.0).abs() < 0.001);
+        assert_eq!(b.frame_start, 120);
+        assert_eq!(b.frame_end, 480);
+    }
+
+    #[test]
+    fn test_boundary_with_score_populates_all_fields() {
+        let b = SceneBoundary::with_score(
+            10.0, 30.0, 24.0, 240, 720, 0.1,  // inter_cost
+            0.05, // imp_block_cost
+            0.08, // backward_adjusted_cost
+            0.12, // forward_adjusted_cost
+            0.15, // threshold
+        );
+
+        assert!((b.duration_sec - 20.0).abs() < 0.001);
+        assert!((b.inter_cost.unwrap() - 0.1).abs() < 0.001);
+        assert!((b.imp_block_cost.unwrap() - 0.05).abs() < 0.001);
+        assert!((b.backward_adjusted_cost.unwrap() - 0.08).abs() < 0.001);
+        assert!((b.forward_adjusted_cost.unwrap() - 0.12).abs() < 0.001);
+        assert!((b.threshold.unwrap() - 0.15).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_total_scenes_on_detection_result() {
+        // Empty boundaries → 0
+        let result_empty = SceneDetectionResult {
+            boundaries: vec![],
+            fps: 24.0,
+            detection_time_ms: 0,
+        };
+        assert_eq!(result_empty.total_scenes(), 0);
+
+        // Multiple boundaries → correct count
+        let result_multi = SceneDetectionResult {
+            boundaries: vec![
+                make_boundary(0.0, 5.0, 0.3),
+                make_boundary(5.0, 12.0, 0.7),
+                make_boundary(12.0, 20.0, 0.5),
+            ],
+            fps: 24.0,
+            detection_time_ms: 100,
+        };
+        assert_eq!(result_multi.total_scenes(), 3);
+    }
 }

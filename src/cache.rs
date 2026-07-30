@@ -556,4 +556,183 @@ mod tests {
             "https://www.youtube.com/watch?v=abc"
         );
     }
+
+    // ── Filesystem-based tests ──────────────────────────────────────
+
+    #[test]
+    fn test_store_video_get_video_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cache = VideoCache::with_dir(tmp.path().to_path_buf()).unwrap();
+        let url = "https://www.youtube.com/watch?v=roundtrip1";
+
+        // Create a dummy video file in the tempdir
+        let src = tmp.path().join("dummy.mp4");
+        std::fs::write(&src, b"fake video content").unwrap();
+
+        // Store and retrieve
+        cache.store_video(url, &src).unwrap();
+        let path = cache.get_video(url).expect("get_video should return Some");
+        assert!(path.exists(), "retrieved video path must exist on disk");
+        assert_eq!(std::fs::read(&path).unwrap(), b"fake video content");
+    }
+
+    #[test]
+    fn test_has_video() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cache = VideoCache::with_dir(tmp.path().to_path_buf()).unwrap();
+        let url = "https://www.youtube.com/watch?v=hasvid1";
+
+        // Unknown URL → false
+        assert!(!cache.has_video(url));
+
+        // Store a video
+        let src = tmp.path().join("vid.mp4");
+        std::fs::write(&src, b"vid data").unwrap();
+        cache.store_video(url, &src).unwrap();
+
+        // Now true
+        assert!(cache.has_video(url));
+    }
+
+    #[test]
+    fn test_store_subtitles_get_subtitles_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cache = VideoCache::with_dir(tmp.path().to_path_buf()).unwrap();
+        let url = "https://www.youtube.com/watch?v=subround1";
+
+        // Create a subtitle file with the name that get_subtitles expects
+        let sub_content =
+            br#"{"events":[{"tStartMs":0,"dDurationMs":1000,"segs":[{"utf8":"Hello"}]}]}"#;
+        let src = tmp.path().join("video.en.json3");
+        std::fs::write(&src, sub_content).unwrap();
+
+        // Store with language 'en'
+        cache.store_subtitles(url, "en", &src).unwrap();
+        let path = cache
+            .get_subtitles(url, "en")
+            .expect("get_subtitles should return Some");
+        assert!(path.exists(), "retrieved subtitle path must exist");
+        assert_eq!(std::fs::read(&path).unwrap(), sub_content);
+    }
+
+    #[test]
+    fn test_get_subtitles_language_matching() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cache = VideoCache::with_dir(tmp.path().to_path_buf()).unwrap();
+        let url = "https://www.youtube.com/watch?v=sublang1";
+
+        // Store with 'en' in the filename (what get_subtitles looks for)
+        let src = tmp.path().join("video.en.json3");
+        std::fs::write(&src, b"sub en data").unwrap();
+        cache.store_subtitles(url, "en", &src).unwrap();
+
+        // Retrieve with regional language 'en-US' — should normalize to 'en' and match
+        let path = cache
+            .get_subtitles(url, "en-US")
+            .expect("get_subtitles('en-US') should find video.en.json3");
+        assert!(path.exists());
+        assert_eq!(
+            path.file_name().unwrap().to_str().unwrap(),
+            "video.en.json3"
+        );
+    }
+
+    #[test]
+    fn test_get_subtitles_prefers_orig() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cache = VideoCache::with_dir(tmp.path().to_path_buf()).unwrap();
+        let url = "https://www.youtube.com/watch?v=suborig1";
+
+        // Store both 'en' (auto-generated) and 'en-orig' files
+        let src_auto = tmp.path().join("video.en.json3");
+        std::fs::write(&src_auto, b"auto-generated subs").unwrap();
+        cache.store_subtitles(url, "en", &src_auto).unwrap();
+
+        let src_orig = tmp.path().join("video.en-orig.json3");
+        std::fs::write(&src_orig, b"original subs").unwrap();
+        cache.store_subtitles(url, "en", &src_orig).unwrap();
+
+        // get_subtitles tries -orig first
+        let path = cache
+            .get_subtitles(url, "en")
+            .expect("get_subtitles should return Some");
+        assert!(
+            path.to_str().unwrap().contains("en-orig"),
+            "should prefer -orig subtitle file, got: {:?}",
+            path
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"original subs");
+    }
+
+    #[test]
+    fn test_save_manifest_persistence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let url = "https://www.youtube.com/watch?v=persist1";
+
+        // Create cache, store info, drop it
+        let info = VideoInfo {
+            title: "Persistent Video".to_string(),
+            uploader: Some("Author".to_string()),
+            duration: Some(300.0),
+            language: Some("en".to_string()),
+            description: None,
+        };
+        {
+            let mut cache = VideoCache::with_dir(dir.clone()).unwrap();
+            cache.store_info(url, &info).unwrap();
+            assert_eq!(cache.entry_count(), 1);
+        } // cache dropped here
+
+        // Reopen from the same directory
+        let cache2 = VideoCache::with_dir(dir).unwrap();
+        assert_eq!(
+            cache2.entry_count(),
+            1,
+            "manifest should persist across drops"
+        );
+        let retrieved = cache2
+            .get_info(url)
+            .expect("info should survive cache reopen");
+        assert_eq!(retrieved.title, "Persistent Video");
+        assert_eq!(retrieved.duration, Some(300.0));
+    }
+
+    #[test]
+    fn test_evict_lru() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cache = VideoCache::with_dir(tmp.path().to_path_buf()).unwrap();
+        // Set tiny max — each entry is ~20 bytes, so 3 entries = ~60 bytes
+        cache.max_size_bytes = 40;
+
+        let urls = [
+            "https://www.youtube.com/watch?v=evict_a",
+            "https://www.youtube.com/watch?v=evict_b",
+            "https://www.youtube.com/watch?v=evict_c",
+        ];
+
+        for url in &urls {
+            let src = tmp
+                .path()
+                .join(format!("{}.mp4", VideoCache::cache_key(url)));
+            std::fs::write(&src, format!("data for {}", url)).unwrap();
+            cache.store_video(url, &src).unwrap();
+            // Small sleep so accessed_at timestamps differ for LRU ordering
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+
+        // After storing 3, some should have been evicted
+        let remaining = cache.entry_count();
+        assert!(
+            remaining < 3,
+            "eviction should have removed at least one entry, but {} remain",
+            remaining
+        );
+
+        // The first stored URL (oldest accessed_at) should be evicted
+        assert!(
+            !cache.has_video(urls[0]),
+            "oldest entry (urls[0]) should have been evicted"
+        );
+    }
 }
