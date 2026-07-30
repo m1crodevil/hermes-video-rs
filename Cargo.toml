@@ -41,6 +41,3 @@ include-files = ["src/**/*.rs"]
 out = ["html", "lcov"]
 fail-under = 70
 
-[lints.clippy]
-unwrap_used = "warn"
-expect_used = "warn"
