@@ -89,4 +89,25 @@ mod tests {
         assert!(filter.contains("512"));
         assert!(filter.contains("1998"));
     }
+
+    #[test]
+    fn even_indices_count1_n1() {
+        assert_eq!(even_indices(1, 1), vec![0]);
+    }
+
+    #[test]
+    fn scale_filter_minimum_resolution() {
+        let filter = scale_filter(128);
+        assert!(filter.contains("128"));
+        assert!(filter.contains("1998"));
+        assert!(filter.starts_with("scale="));
+    }
+
+    #[test]
+    fn scale_filter_maximum_resolution() {
+        let filter = scale_filter(4096);
+        assert!(filter.contains("4096"));
+        assert!(filter.contains("1998"));
+        assert!(filter.starts_with("scale="));
+    }
 }

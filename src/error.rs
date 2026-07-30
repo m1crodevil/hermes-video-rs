@@ -91,4 +91,27 @@ mod tests {
     fn sanitize_path_no_slash() {
         assert_eq!(sanitize_path(Path::new("no-slash")), "no-slash");
     }
+
+    #[test]
+    fn sanitize_path_unicode() {
+        let p = Path::new("/home/user/日本語ファイル.mp4");
+        assert_eq!(sanitize_path(p), "日本語ファイル.mp4");
+    }
+
+    #[test]
+    fn display_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let watch_err: WatchError = io_err.into();
+        let msg = watch_err.to_string();
+        assert!(msg.starts_with("IO error:"));
+        assert!(msg.contains("denied"));
+    }
+
+    #[test]
+    fn display_json_error() {
+        let json_err = serde_json::from_str::<serde_json::Value>("invalid!").unwrap_err();
+        let watch_err: WatchError = json_err.into();
+        let msg = watch_err.to_string();
+        assert!(msg.starts_with("JSON error:"));
+    }
 }

@@ -735,4 +735,42 @@ mod tests {
             "oldest entry (urls[0]) should have been evicted"
         );
     }
+
+    // ── cache_key edge cases ───────────────────────────────────────
+
+    #[test]
+    fn test_cache_key_empty_string() {
+        let key = VideoCache::cache_key("");
+        assert_eq!(key.len(), 64); // SHA256 hex = 64 chars
+        // Should be deterministic — same empty string always gives same key
+        assert_eq!(key, VideoCache::cache_key(""));
+    }
+
+    #[test]
+    fn test_cache_key_very_long_url() {
+        // Build a URL longer than 1000 chars
+        let long_path = "a".repeat(1000);
+        let url = format!("https://example.com/{}", long_path);
+        assert!(url.len() > 1000);
+        let key = VideoCache::cache_key(&url);
+        assert_eq!(key.len(), 64); // still a valid SHA256 hex
+    }
+
+    // ── normalize_url edge cases ───────────────────────────────────
+
+    #[test]
+    fn test_normalize_url_with_fragment() {
+        // Fragment (#section) should be preserved since normalize_url doesn't strip it
+        let url = "https://www.youtube.com/watch?v=abc#section";
+        let result = normalize_url(url);
+        assert!(result.contains("#section"));
+    }
+
+    #[test]
+    fn test_normalize_url_with_port() {
+        // Port number should be preserved
+        let url = "https://youtube.com:443/watch?v=abc";
+        let result = normalize_url(url);
+        assert!(result.contains(":443"));
+    }
 }

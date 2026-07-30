@@ -405,8 +405,97 @@ Hello
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("subs.srt");
         std::fs::write(&path, "1\n00:00:00,000 --> 00:00:01,000\nHello\n").unwrap();
-
         let result = parse_subtitle_file(&path);
         assert!(result.is_err());
+    }
+
+    // ── Unicode/encoding edge cases ─────────────────────────────────
+
+    #[test]
+    fn test_parse_json3_cjk_text() {
+        let json = serde_json::json!({
+            "events": [{
+                "tStartMs": 0,
+                "dDurationMs": 3000,
+                "segs": [
+                    { "utf8": "日本語テスト" },
+                    { "utf8": " " },
+                    { "utf8": "中文测试" },
+                    { "utf8": " " },
+                    { "utf8": "한국어테스트" }
+                ]
+            }]
+        });
+        let segs = parse_json3(&json.to_string()).unwrap();
+        assert_eq!(segs.len(), 1);
+        assert!(segs[0].text.contains("日本語テスト"));
+        assert!(segs[0].text.contains("中文测试"));
+        assert!(segs[0].text.contains("한국어테스트"));
+    }
+
+    #[test]
+    fn test_parse_json3_emoji_in_text() {
+        let json = serde_json::json!({
+            "events": [{
+                "tStartMs": 0,
+                "dDurationMs": 2000,
+                "segs": [
+                    { "utf8": "Hello 🌍 World" },
+                    { "utf8": " " },
+                    { "utf8": "🎉🎈🎊" }
+                ]
+            }]
+        });
+        let segs = parse_json3(&json.to_string()).unwrap();
+        assert_eq!(segs.len(), 1);
+        assert!(segs[0].text.contains("🌍"));
+        assert!(segs[0].text.contains("🎉🎈🎊"));
+    }
+
+    #[test]
+    fn test_parse_vtt_with_bom() {
+        let vtt = "\u{FEFF}WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nBOM text here\n";
+        let segs = parse_vtt(vtt).unwrap();
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].text, "BOM text here");
+    }
+
+    // ── Large input stress tests ────────────────────────────────────
+
+    #[test]
+    fn test_parse_json3_1000_events() {
+        let mut events = Vec::new();
+        for i in 0..1000 {
+            events.push(serde_json::json!({
+                "tStartMs": i * 1000,
+                "dDurationMs": 800,
+                "segs": [{ "utf8": format!("event {}", i) }]
+            }));
+        }
+        let json = serde_json::json!({ "events": events });
+        let segs = parse_json3(&json.to_string()).unwrap();
+        assert_eq!(segs.len(), 1000);
+        assert_eq!(segs[0].text, "event 0");
+        assert_eq!(segs[999].text, "event 999");
+    }
+
+    #[test]
+    fn test_filter_by_range_500_segments() {
+        let segs: Vec<TranscriptSegment> = (0..500)
+            .map(|i| TranscriptSegment {
+                start: i as f64,
+                end: (i + 1) as f64,
+                text: format!("seg{}", i),
+                words: None,
+            })
+            .collect();
+        let result = filter_by_range(&segs, Some(100.0), Some(200.0));
+        // Segments [100,200] overlap [100.0,200.0] → segments 99–200 inclusive (102 segments)
+        assert!(result.len() >= 100);
+        assert!(result.len() <= 102);
+        // First result should have start near 99
+        assert!(result[0].start >= 99.0);
+        // Last result should have end near 201
+        assert!(result.last().unwrap().end <= 201.0);
     }
 }
