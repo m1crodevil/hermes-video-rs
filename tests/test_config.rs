@@ -1,4 +1,4 @@
-use watch2::config::{suggest_subtitle_language, get_language_name};
+use watch2::config::{get_language_name, suggest_subtitle_language};
 
 #[test]
 fn test_get_language_name_indonesian() {
@@ -52,10 +52,7 @@ fn test_suggest_subtitle_no_video_lang_default_en() {
     // No video language → default to en
     let manual = vec!["en".to_string(), "id".to_string()];
     let auto = vec!["en".to_string()];
-    assert_eq!(
-        suggest_subtitle_language(None, &manual, &auto, None),
-        "en"
-    );
+    assert_eq!(suggest_subtitle_language(None, &manual, &auto, None), "en");
 }
 
 #[test]
@@ -86,10 +83,7 @@ fn test_suggest_subtitle_no_video_lang_no_en_fallback() {
     // no manual or auto "en" → returns "en" (the default)
     let manual = vec!["ko".to_string()];
     let auto = vec!["zh".to_string()];
-    assert_eq!(
-        suggest_subtitle_language(None, &manual, &auto, None),
-        "en"
-    );
+    assert_eq!(suggest_subtitle_language(None, &manual, &auto, None), "en");
 }
 
 #[test]

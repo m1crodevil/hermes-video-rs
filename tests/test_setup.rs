@@ -1,6 +1,6 @@
-use watch2::setup::{check, SetupStatus};
 use std::fs;
 use tempfile::TempDir;
+use watch2::setup::{SetupStatus, check};
 
 /// Test that can_proceed is independent of has_api_key.
 /// This documents the expected behavior: binaries required, API key optional.

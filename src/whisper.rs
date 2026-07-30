@@ -1,8 +1,8 @@
+use crate::error::{Result, WatchError};
+use crate::output::TranscriptSegment;
+use async_trait::async_trait;
 use std::path::Path;
 use std::time::Duration;
-use async_trait::async_trait;
-use crate::error::{WatchError, Result};
-use crate::output::TranscriptSegment;
 
 const RETRY_BASE_DELAY: f64 = 2.0;
 const MAX_RETRIES: u32 = 4;
@@ -24,7 +24,11 @@ pub trait WhisperProvider: Send + Sync {
     /// Transcribe an audio file to transcript segments.
     async fn transcribe(&self, audio_path: &Path, api_key: &str) -> Result<Vec<TranscriptSegment>> {
         let audio_bytes = std::fs::read(audio_path).map_err(|e| {
-            WatchError::Whisper(format!("Failed to read audio '{}': {}", audio_path.display(), e))
+            WatchError::Whisper(format!(
+                "Failed to read audio '{}': {}",
+                audio_path.display(),
+                e
+            ))
         })?;
 
         let client = reqwest::Client::builder()

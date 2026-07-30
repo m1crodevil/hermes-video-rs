@@ -1,7 +1,7 @@
-use std::path::Path;
-use crate::error::{WatchError, Result};
-use crate::output::FrameInfo;
 use super::{FrameMeta, even_indices, scale_filter};
+use crate::error::{Result, WatchError};
+use crate::output::FrameInfo;
+use std::path::Path;
 
 pub fn extract_at_timestamps(
     video_path: &Path,
@@ -20,9 +20,9 @@ pub fn extract_at_timestamps(
         for entry in std::fs::read_dir(out_dir)? {
             let entry = entry?;
             let p = entry.path();
-            if p.file_stem().map_or(false, |s| {
-                s.to_string_lossy().starts_with("cue_")
-            }) {
+            if p.file_stem()
+                .map_or(false, |s| s.to_string_lossy().starts_with("cue_"))
+            {
                 let _ = std::fs::remove_file(&p);
             }
         }
@@ -32,14 +32,21 @@ pub fn extract_at_timestamps(
     let hi = end_seconds.unwrap_or(f64::INFINITY);
 
     // Sort, dedup, and round timestamps to 2 decimal places
-    let mut requested: Vec<f64> = timestamps.iter().map(|t| (t * 100.0).round() / 100.0).collect();
+    let mut requested: Vec<f64> = timestamps
+        .iter()
+        .map(|t| (t * 100.0).round() / 100.0)
+        .collect();
     requested.sort_by(|a, b| a.partial_cmp(b).unwrap());
     requested.dedup_by(|a, b| (*a - *b).abs() < f64::EPSILON);
 
     let candidate_count = requested.len();
 
     // Filter to focus window
-    let in_window: Vec<f64> = requested.iter().copied().filter(|t| *t >= lo && *t <= hi).collect();
+    let in_window: Vec<f64> = requested
+        .iter()
+        .copied()
+        .filter(|t| *t >= lo && *t <= hi)
+        .collect();
     let dropped_out_of_window = candidate_count - in_window.len();
 
     // Even-sample if over max_frames cap

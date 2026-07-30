@@ -1,9 +1,9 @@
+use crate::download::VideoInfo;
+use crate::error::Result;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use sha2::{Sha256, Digest};
-use serde::{Deserialize, Serialize};
-use crate::error::Result;
-use crate::download::VideoInfo;
 
 const MAX_CACHE_SIZE_BYTES: u64 = 10 * 1024 * 1024 * 1024; // 10GB
 const MANIFEST_FILE: &str = "index.json";
@@ -94,10 +94,10 @@ impl VideoCache {
 
         // Normalize: "en-US" → "en" for filename matching
         let base_lang = lang.split('-').next().unwrap_or(lang);
- 
-         // Try original subs first, then auto-generated
-         for suffix in &[format!("{base_lang}-orig"), base_lang.to_string()] {
-             let path = dir.join(format!("video.{}.json3", suffix));
+
+        // Try original subs first, then auto-generated
+        for suffix in &[format!("{base_lang}-orig"), base_lang.to_string()] {
+            let path = dir.join(format!("video.{}.json3", suffix));
             if path.exists() {
                 return Some(path);
             }
@@ -115,16 +115,19 @@ impl VideoCache {
         std::fs::copy(path, &dest)?;
 
         // Update manifest
-        let entry = self.manifest.entry(key.clone()).or_insert_with(|| CacheEntry {
-            url: url.to_string(),
-            key: key.clone(),
-            cached_at: now_unix(),
-            accessed_at: now_unix(),
-            size_bytes: 0,
-            has_video: false,
-            has_subtitles: false,
-            title: None,
-        });
+        let entry = self
+            .manifest
+            .entry(key.clone())
+            .or_insert_with(|| CacheEntry {
+                url: url.to_string(),
+                key: key.clone(),
+                cached_at: now_unix(),
+                accessed_at: now_unix(),
+                size_bytes: 0,
+                has_video: false,
+                has_subtitles: false,
+                title: None,
+            });
         entry.accessed_at = now_unix();
         entry.has_subtitles = true;
         entry.size_bytes = calc_dir_size(&dir);
@@ -152,11 +155,7 @@ impl VideoCache {
             return None;
         }
         let path = self.cache_dir(&key).join("video.mp4");
-        if path.exists() {
-            Some(path)
-        } else {
-            None
-        }
+        if path.exists() { Some(path) } else { None }
     }
 
     /// Store video file in cache.
@@ -169,16 +168,19 @@ impl VideoCache {
         std::fs::copy(path, &dest)?;
 
         // Update manifest
-        let entry = self.manifest.entry(key.clone()).or_insert_with(|| CacheEntry {
-            url: url.to_string(),
-            key: key.clone(),
-            cached_at: now_unix(),
-            accessed_at: now_unix(),
-            size_bytes: 0,
-            has_video: false,
-            has_subtitles: false,
-            title: None,
-        });
+        let entry = self
+            .manifest
+            .entry(key.clone())
+            .or_insert_with(|| CacheEntry {
+                url: url.to_string(),
+                key: key.clone(),
+                cached_at: now_unix(),
+                accessed_at: now_unix(),
+                size_bytes: 0,
+                has_video: false,
+                has_subtitles: false,
+                title: None,
+            });
         entry.accessed_at = now_unix();
         entry.has_video = true;
         entry.size_bytes = calc_dir_size(&dir);
@@ -207,22 +209,25 @@ impl VideoCache {
     pub fn store_info(&mut self, url: &str, info: &VideoInfo) -> Result<()> {
         let key = Self::cache_key(url);
         let dir = self.cache_dir(&key);
-        std::fs::create_dir_all(&dir)?;  // Ensure directory exists
+        std::fs::create_dir_all(&dir)?; // Ensure directory exists
         let path = dir.join("info.json");
         let data = serde_json::to_string_pretty(info)?;
         std::fs::write(&path, data)?;
 
         // Update manifest
-        let entry = self.manifest.entry(key.clone()).or_insert_with(|| CacheEntry {
-            url: url.to_string(),
-            key: key.clone(),
-            cached_at: now_unix(),
-            accessed_at: now_unix(),
-            size_bytes: 0,
-            has_video: false,
-            has_subtitles: false,
-            title: Some(info.title.clone()),
-        });
+        let entry = self
+            .manifest
+            .entry(key.clone())
+            .or_insert_with(|| CacheEntry {
+                url: url.to_string(),
+                key: key.clone(),
+                cached_at: now_unix(),
+                accessed_at: now_unix(),
+                size_bytes: 0,
+                has_video: false,
+                has_subtitles: false,
+                title: Some(info.title.clone()),
+            });
         entry.accessed_at = now_unix();
         entry.title = Some(info.title.clone());
         entry.size_bytes = calc_dir_size(&dir);
@@ -271,7 +276,8 @@ impl VideoCache {
 
         while self.total_size() > self.max_size_bytes && !self.manifest.is_empty() {
             // Find the least recently accessed entry
-            if let Some(oldest_key) = self.manifest
+            if let Some(oldest_key) = self
+                .manifest
                 .iter()
                 .min_by_key(|(_, e)| e.accessed_at)
                 .map(|(k, _)| k.clone())
@@ -309,8 +315,12 @@ impl VideoCache {
     pub fn print_stats(&self) {
         let size_mb = self.total_size() as f64 / (1024.0 * 1024.0);
         let entries = self.entry_count();
-        eprintln!("[watch2] cache: {} entries, {:.1} MB used (max {:.0} GB)",
-            entries, size_mb, self.max_size_bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+        eprintln!(
+            "[watch2] cache: {} entries, {:.1} MB used (max {:.0} GB)",
+            entries,
+            size_mb,
+            self.max_size_bytes as f64 / (1024.0 * 1024.0 * 1024.0)
+        );
     }
 
     // ── Internal ────────────────────────────────────────────────────
@@ -333,7 +343,8 @@ fn normalize_url(url: &str) -> String {
     if let Some(pos) = normalized.find('?') {
         let base = &normalized[..pos];
         let query = &normalized[pos + 1..];
-        let params: Vec<&str> = query.split('&')
+        let params: Vec<&str> = query
+            .split('&')
             .filter(|p| !p.starts_with("si=") && !p.starts_with("list="))
             .collect();
         if params.is_empty() {
@@ -345,8 +356,7 @@ fn normalize_url(url: &str) -> String {
 
     // Normalize YouTube URLs
     if normalized.contains("youtu.be/") {
-        normalized = normalized
-            .replace("youtu.be/", "www.youtube.com/watch?v=");
+        normalized = normalized.replace("youtu.be/", "www.youtube.com/watch?v=");
     }
 
     normalized

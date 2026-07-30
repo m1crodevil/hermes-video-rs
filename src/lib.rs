@@ -1,10 +1,10 @@
-pub mod cli;
 pub mod cache;
+pub mod cli;
 pub mod config;
-pub mod pipeline;
 pub mod download;
 pub mod error;
 pub mod frames;
+pub mod pipeline;
 
 pub mod output;
 pub mod scene_detect;

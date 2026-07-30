@@ -2,9 +2,8 @@ use std::path::PathBuf;
 
 /// Whitelist of valid language codes accepted by this tool.
 pub const VALID_LANG_CODES: &[&str] = &[
-    "en", "id", "ms", "jv", "su", "ar", "zh", "ja", "ko", "es", "pt",
-    "fr", "de", "it", "ru", "hi", "th", "vi", "tl", "tr", "pl", "nl",
-    "sv", "da", "no", "fi",
+    "en", "id", "ms", "jv", "su", "ar", "zh", "ja", "ko", "es", "pt", "fr", "de", "it", "ru", "hi",
+    "th", "vi", "tl", "tr", "pl", "nl", "sv", "da", "no", "fi",
 ];
 
 /// Check if a language code is in the valid whitelist.
@@ -14,15 +13,32 @@ pub fn is_valid_lang(code: &str) -> bool {
 
 /// Common language codes mapped to human-readable names.
 pub const LANGUAGE_NAMES: &[(&str, &str)] = &[
-    ("id", "Indonesian"), ("en", "English"), ("ms", "Malay"),
-    ("jv", "Javanese"), ("su", "Sundanese"), ("ar", "Arabic"),
-    ("zh", "Chinese"), ("ja", "Japanese"), ("ko", "Korean"),
-    ("es", "Spanish"), ("pt", "Portuguese"), ("fr", "French"),
-    ("de", "German"), ("it", "Italian"), ("ru", "Russian"),
-    ("hi", "Hindi"), ("th", "Thai"), ("vi", "Vietnamese"),
-    ("tl", "Filipino"), ("tr", "Turkish"), ("pl", "Polish"),
-    ("nl", "Dutch"), ("sv", "Swedish"), ("da", "Danish"),
-    ("no", "Norwegian"), ("fi", "Finnish"),
+    ("id", "Indonesian"),
+    ("en", "English"),
+    ("ms", "Malay"),
+    ("jv", "Javanese"),
+    ("su", "Sundanese"),
+    ("ar", "Arabic"),
+    ("zh", "Chinese"),
+    ("ja", "Japanese"),
+    ("ko", "Korean"),
+    ("es", "Spanish"),
+    ("pt", "Portuguese"),
+    ("fr", "French"),
+    ("de", "German"),
+    ("it", "Italian"),
+    ("ru", "Russian"),
+    ("hi", "Hindi"),
+    ("th", "Thai"),
+    ("vi", "Vietnamese"),
+    ("tl", "Filipino"),
+    ("tr", "Turkish"),
+    ("pl", "Polish"),
+    ("nl", "Dutch"),
+    ("sv", "Swedish"),
+    ("da", "Danish"),
+    ("no", "Norwegian"),
+    ("fi", "Finnish"),
 ];
 
 /// Get human-readable language name from a 2-letter code.
@@ -75,10 +91,21 @@ const VALID_NON_PLACEHOLDERS: &[&str] = &["true", "false", "yes", "no"];
 /// Detect placeholder API key values that haven't been replaced with real keys.
 pub fn is_placeholder(value: &str) -> bool {
     let stripped = value.trim().to_lowercase();
-    if stripped.is_empty() { return true; }
-    if VALID_NON_PLACEHOLDERS.contains(&stripped.as_str()) { return false; }
-    if PLACEHOLDER_PATTERNS.iter().any(|p| stripped.starts_with(&p.to_lowercase())) { return true; }
-    if stripped.len() < 12 && !stripped.contains(' ') { return true; }
+    if stripped.is_empty() {
+        return true;
+    }
+    if VALID_NON_PLACEHOLDERS.contains(&stripped.as_str()) {
+        return false;
+    }
+    if PLACEHOLDER_PATTERNS
+        .iter()
+        .any(|p| stripped.starts_with(&p.to_lowercase()))
+    {
+        return true;
+    }
+    if stripped.len() < 12 && !stripped.contains(' ') {
+        return true;
+    }
     false
 }
 

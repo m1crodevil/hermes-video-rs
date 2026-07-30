@@ -69,8 +69,12 @@ impl WatchReport {
     pub fn to_markdown(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!("# {}\n\n", self.title));
-        out.push_str(&format!("**Source:** {} | **Detail:** {} | **Duration:** {}\n\n",
-            self.source, self.detail, format_time(self.duration)));
+        out.push_str(&format!(
+            "**Source:** {} | **Detail:** {} | **Duration:** {}\n\n",
+            self.source,
+            self.detail,
+            format_time(self.duration)
+        ));
         if let Some(ref u) = self.uploader {
             out.push_str(&format!("**Uploader:** {}\n", u));
         }
@@ -84,19 +88,30 @@ impl WatchReport {
             out.push('\n');
         }
         if !self.frames.is_empty() {
-            out.push_str(&format!("## Frames ({} total, {} dropped)\n\n",
-                self.frames.len(), self.frames_dropped));
+            out.push_str(&format!(
+                "## Frames ({} total, {} dropped)\n\n",
+                self.frames.len(),
+                self.frames_dropped
+            ));
             for f in &self.frames {
-                out.push_str(&format!("- `{}` (t={}, {})\n",
-                    f.path, format_time(f.timestamp), f.reason));
+                out.push_str(&format!(
+                    "- `{}` (t={}, {})\n",
+                    f.path,
+                    format_time(f.timestamp),
+                    f.reason
+                ));
             }
             out.push('\n');
         }
         if !self.transcript.is_empty() {
             out.push_str(&format!("## Transcript ({})\n\n", self.transcript_source));
             for seg in &self.transcript {
-                out.push_str(&format!("[{} -> {}] {}\n",
-                    format_time(seg.start), format_time(seg.end), seg.text));
+                out.push_str(&format!(
+                    "[{} -> {}] {}\n",
+                    format_time(seg.start),
+                    format_time(seg.end),
+                    seg.text
+                ));
             }
             out.push('\n');
         }
@@ -108,8 +123,13 @@ impl WatchReport {
                     let word = m.get("word").and_then(|v| v.as_str()).unwrap_or("?");
                     let reason = m.get("reason").and_then(|v| v.as_str()).unwrap_or("?");
                     let priority = m.get("priority").and_then(|v| v.as_u64()).unwrap_or(3);
-                    out.push_str(&format!("- `[{}]` P{} `{}` ({})\n",
-                        format_time(ts), priority, word, reason));
+                    out.push_str(&format!(
+                        "- `[{}]` P{} `{}` ({})\n",
+                        format_time(ts),
+                        priority,
+                        word,
+                        reason
+                    ));
                 }
                 out.push('\n');
             }
@@ -141,12 +161,18 @@ mod tests {
     #[test]
     fn test_empty_report() {
         let report = WatchReport {
-            title: "Test".into(), source: "test.mp4".into(), detail: "balanced".into(),
+            title: "Test".into(),
+            source: "test.mp4".into(),
+            detail: "balanced".into(),
             uploader: Some("TestChannel".into()),
             language: Some("en".into()),
             engine: Some("scene-or-uniform".into()),
-            frames: vec![], frames_dropped: 0, transcript: vec![],
-            transcript_source: "none".into(), duration: 60.0, working_dir: "/tmp/test".into(),
+            frames: vec![],
+            frames_dropped: 0,
+            transcript: vec![],
+            transcript_source: "none".into(),
+            duration: 60.0,
+            working_dir: "/tmp/test".into(),
             warnings: vec![],
             key_moments: None,
             key_moment_stats: None,

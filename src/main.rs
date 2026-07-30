@@ -1,10 +1,10 @@
 use clap::Parser;
+use std::path::PathBuf;
 use watch2::cache::VideoCache;
 use watch2::cli;
 use watch2::config::WatchConfig;
 use watch2::pipeline::{self, PipelineContext};
 use watch2::setup;
-use std::path::PathBuf;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -18,7 +18,10 @@ async fn main() -> anyhow::Result<()> {
     let setup_status = setup::check();
     if !setup_status.can_proceed {
         if !setup_status.missing_binaries.is_empty() {
-            eprintln!("❌ Missing required binaries: {}", setup_status.missing_binaries.join(", "));
+            eprintln!(
+                "❌ Missing required binaries: {}",
+                setup_status.missing_binaries.join(", ")
+            );
             eprintln!("   Install: apt install ffmpeg  (Linux)");
             std::process::exit(3);
         }
@@ -40,18 +43,21 @@ async fn main() -> anyhow::Result<()> {
     let cache = if cli.no_cache {
         None
     } else {
-        let cache_dir = cli.cache_dir.as_deref()
+        let cache_dir = cli
+            .cache_dir
+            .as_deref()
             .map(PathBuf::from)
-            .unwrap_or_else(|| dirs::cache_dir()
-                .unwrap_or_default()
-                .join("watch2"));
+            .unwrap_or_else(|| dirs::cache_dir().unwrap_or_default().join("watch2"));
         match VideoCache::with_dir(cache_dir) {
             Ok(c) => {
                 c.print_stats();
                 Some(c)
             }
             Err(e) => {
-                eprintln!("[watch2] cache init error: {} — proceeding without cache", e);
+                eprintln!(
+                    "[watch2] cache init error: {} — proceeding without cache",
+                    e
+                );
                 None
             }
         }

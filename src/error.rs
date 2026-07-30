@@ -8,9 +8,6 @@ pub enum WatchError {
     #[error("ffmpeg error: {0}")]
     Ffmpeg(String),
 
-    #[error("No captions available for this video")]
-    NoCaptions,
-
     #[error("Whisper API error: {0}")]
     Whisper(String),
 

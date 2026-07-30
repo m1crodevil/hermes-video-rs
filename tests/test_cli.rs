@@ -12,10 +12,7 @@ fn test_parse_basic_url() {
 
 #[test]
 fn test_parse_with_flags() {
-    let cli = Cli::try_parse_from([
-        "watch", "test.mp4",
-        "--no-whisper",
-    ]).unwrap();
+    let cli = Cli::try_parse_from(["watch", "test.mp4", "--no-whisper"]).unwrap();
     assert_eq!(cli.source, "test.mp4");
     assert!(cli.no_whisper);
 }
@@ -119,14 +116,19 @@ fn test_cookies_flag() {
 #[test]
 fn test_multiple_flags_combined() {
     let cli = Cli::try_parse_from([
-        "watch", "https://youtu.be/abc",
+        "watch",
+        "https://youtu.be/abc",
         "--no-whisper",
         "--no-dedup",
         "--keep-video",
-        "--output", "json",
-        "--resolution", "768",
-        "--out-dir", "/tmp/test-combo",
-    ]).unwrap();
+        "--output",
+        "json",
+        "--resolution",
+        "768",
+        "--out-dir",
+        "/tmp/test-combo",
+    ])
+    .unwrap();
     assert_eq!(cli.source, "https://youtu.be/abc");
     assert!(cli.no_whisper);
     assert!(cli.no_dedup);

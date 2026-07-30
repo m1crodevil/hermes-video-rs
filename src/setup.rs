@@ -64,9 +64,17 @@ fn check_api_key(env_file: &Path) -> bool {
     if let Ok(content) = std::fs::read_to_string(env_file) {
         for line in content.lines() {
             let line = line.trim();
-            if line.starts_with('#') || !line.contains('=') { continue; }
+            if line.starts_with('#') || !line.contains('=') {
+                continue;
+            }
             let key = line.split('=').next().unwrap_or("").trim();
-            let val = line.splitn(2, '=').nth(1).unwrap_or("").trim().trim_matches('"').trim_matches('\'');
+            let val = line
+                .splitn(2, '=')
+                .nth(1)
+                .unwrap_or("")
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'');
             if (key == "GROQ_API_KEY" || key == "OPENAI_API_KEY") && !val.is_empty() {
                 return true;
             }

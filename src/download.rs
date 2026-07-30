@@ -1,15 +1,11 @@
+use crate::config::{get_language_name, is_valid_lang, suggest_subtitle_language};
+use crate::error::{Result, WatchError};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use crate::error::{WatchError, Result};
-use crate::config::{suggest_subtitle_language, get_language_name, is_valid_lang};
 
 /// Common yt-dlp arguments used across all download functions.
 /// Ensures consistent behavior and prevents playlist processing.
-const COMMON_ARGS: &[&str] = &[
-    "--no-playlist",
-    "--ignore-errors",
-    "--sleep-subtitles", "3",
-];
+const COMMON_ARGS: &[&str] = &["--no-playlist", "--ignore-errors", "--sleep-subtitles", "3"];
 
 /// Rich metadata extracted from a video's info.json sidecar file.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -99,7 +95,10 @@ pub fn ytdlp_network_opts(use_cookies: bool) -> Vec<String> {
     // Chrome cookies for authenticated sessions (opt-in only — breaks android_vr)
     if use_cookies && has_chrome_cookies() {
         opts.extend(["--cookies-from-browser".into(), "chrome".into()]);
-        opts.extend(["--extractor-args".into(), "youtube:player_client=web".into()]);
+        opts.extend([
+            "--extractor-args".into(),
+            "youtube:player_client=web".into(),
+        ]);
     }
 
     opts
@@ -120,18 +119,18 @@ pub fn is_url(source: &str) -> bool {
 
 pub fn resolve_local(path: &str) -> Result<DownloadResult> {
     let path = sanitize_url(path);
-    let p = Path::new(&path)
-        .canonicalize()
-        .map_err(|_| {
-            tracing::debug!("File not found: {} (full path: {})", path, path);
-            WatchError::Download(format!("File not found: {}", crate::error::sanitize_path(Path::new(&path))))
-        })?;
+    let p = Path::new(&path).canonicalize().map_err(|_| {
+        tracing::debug!("File not found: {} (full path: {})", path, path);
+        WatchError::Download(format!(
+            "File not found: {}",
+            crate::error::sanitize_path(Path::new(&path))
+        ))
+    })?;
 
     // Check for common video/audio file extensions
     let valid_extensions = [
-        "mp4", "mkv", "webm", "mov", "avi", "m4v", "flv", "wmv",
-        "ts", "mts", "3gp", "ogv",
-        "mp3", "m4a", "wav", "flac", "ogg", "aac",
+        "mp4", "mkv", "webm", "mov", "avi", "m4v", "flv", "wmv", "ts", "mts", "3gp", "ogv", "mp3",
+        "m4a", "wav", "flac", "ogg", "aac",
     ];
     if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
         if !valid_extensions.contains(&ext.to_lowercase().as_str()) {
@@ -147,7 +146,11 @@ pub fn resolve_local(path: &str) -> Result<DownloadResult> {
         );
     }
 
-    let title = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let title = p
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
     Ok(DownloadResult {
         video_path: Some(p.clone()),
         subtitle_path: None,
@@ -180,7 +183,12 @@ fn subtitle_lang_pattern(lang: &str) -> String {
 /// Returns `(manual: Vec<String>, auto: Vec<String>)` of language codes.
 fn list_available_subtitles(url: &str, use_cookies: bool) -> (Vec<String>, Vec<String>) {
     let mut cmd = Command::new("yt-dlp");
-    let mut args: Vec<&str> = vec!["--skip-download", "--list-subs", "--no-playlist", "--flat-playlist"];
+    let mut args: Vec<&str> = vec![
+        "--skip-download",
+        "--list-subs",
+        "--no-playlist",
+        "--flat-playlist",
+    ];
 
     // Apply network opts for YouTube reliability
     let network_opts = ytdlp_network_opts(use_cookies);
@@ -243,7 +251,12 @@ fn list_available_subtitles(url: &str, use_cookies: bool) -> (Vec<String>, Vec<S
 ///   1. LLM-detected language (passed via `llm_lang`)
 ///   2. `info.language` from yt-dlp metadata
 ///   3. "en" (English)
-pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Option<&str>) -> Result<DownloadResult> {
+pub fn fetch_captions(
+    url: &str,
+    out_dir: &Path,
+    use_cookies: bool,
+    llm_lang: Option<&str>,
+) -> Result<DownloadResult> {
     let url = sanitize_url(url);
     std::fs::create_dir_all(out_dir)?;
     let output_template = out_dir.join("video.%(ext)s").to_string_lossy().to_string();
@@ -261,15 +274,17 @@ pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
         "--write-info-json",
         "--write-subs",
         "--write-auto-subs",
-        "--sub-langs", ".*",  // Fetch ALL subtitle languages
-        "--sub-format", "json3/best",
-        "-o", &output_template,
-        "--", &url,
+        "--sub-langs",
+        ".*", // Fetch ALL subtitle languages
+        "--sub-format",
+        "json3/best",
+        "-o",
+        &output_template,
+        "--",
+        &url,
     ]);
 
-    let status = Command::new("yt-dlp")
-        .args(&args)
-        .status();
+    let status = Command::new("yt-dlp").args(&args).status();
 
     match status {
         Ok(s) if s.success() => {
@@ -292,7 +307,10 @@ pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
                 if is_valid_lang(lang) {
                     lang.clone()
                 } else {
-                    eprintln!("[watch2] detected lang '{}' not in whitelist, falling back to en", lang);
+                    eprintln!(
+                        "[watch2] detected lang '{}' not in whitelist, falling back to en",
+                        lang
+                    );
                     info.language = Some("en".to_string());
                     "en".to_string()
                 }
@@ -327,7 +345,13 @@ pub fn fetch_captions(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
 // download_video — full download with subtitles, YouTube 2026 opts
 // ---------------------------------------------------------------------------
 
-pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Option<&str>, lang: Option<&str>) -> Result<DownloadResult> {
+pub fn download_video(
+    url: &str,
+    out_dir: &Path,
+    use_cookies: bool,
+    llm_lang: Option<&str>,
+    lang: Option<&str>,
+) -> Result<DownloadResult> {
     let url = sanitize_url(url);
     std::fs::create_dir_all(out_dir)?;
     let output_template = out_dir.join("video.%(ext)s").to_string_lossy().to_string();
@@ -353,7 +377,10 @@ pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
     };
 
     if !is_valid_lang(&detected_lang) {
-        eprintln!("[watch2] detected lang '{}' not in whitelist, falling back to en", detected_lang);
+        eprintln!(
+            "[watch2] detected lang '{}' not in whitelist, falling back to en",
+            detected_lang
+        );
     }
     let lang_name = get_language_name(&detected_lang);
 
@@ -384,20 +411,24 @@ pub fn download_video(url: &str, out_dir: &Path, use_cookies: bool, llm_lang: Op
     // Cap video quality at 720p to avoid huge downloads (matches Python hermes-video)
     let format_str = "bv*[height<=720]+ba/b[height<=720]/bv+ba/b";
     args.extend([
-        "-f", format_str,
-        "--merge-output-format", "mp4",
-        "--write-info-json",  // Re-generate info.json with full download
+        "-f",
+        format_str,
+        "--merge-output-format",
+        "mp4",
+        "--write-info-json", // Re-generate info.json with full download
         "--write-subs",
         "--write-auto-subs",
-        "--sub-langs", &sub_langs,
-        "--sub-format", "json3/best",
-        "-o", &output_template,
-        "--", &url,
+        "--sub-langs",
+        &sub_langs,
+        "--sub-format",
+        "json3/best",
+        "-o",
+        &output_template,
+        "--",
+        &url,
     ]);
 
-    let status = Command::new("yt-dlp")
-        .args(&args)
-        .status();
+    let status = Command::new("yt-dlp").args(&args).status();
 
     match status {
         Ok(s) if s.success() => {
@@ -433,13 +464,8 @@ pub fn extract_info(dir: &Path) -> VideoInfo {
         {
             if let Ok(content) = std::fs::read_to_string(&path) {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                    let title = json["title"]
-                        .as_str()
-                        .unwrap_or("Unknown")
-                        .to_string();
-                    let uploader = json["uploader"]
-                        .as_str()
-                        .map(|s| s.to_string());
+                    let title = json["title"].as_str().unwrap_or("Unknown").to_string();
+                    let uploader = json["uploader"].as_str().map(|s| s.to_string());
                     let duration = json["duration"]
                         .as_f64()
                         .or_else(|| json["duration"].as_i64().map(|i| i as f64));
@@ -529,7 +555,8 @@ mod tests {
     use std::fs;
 
     fn temp_dir(prefix: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("watch2_test_{}_{}", prefix, std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("watch2_test_{}_{}", prefix, std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -631,7 +658,12 @@ mod tests {
         let result = find_subtitle(&dir, "id");
         assert!(result.is_some());
         // Both match "id" — orig should be preferred due to sort
-        let name = result.unwrap().file_name().unwrap().to_string_lossy().to_string();
+        let name = result
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
         assert!(name.contains("id"));
         let _ = fs::remove_dir_all(&dir);
     }
@@ -669,7 +701,10 @@ mod tests {
         fs::write(dir.join("video.id.json3"), b"fake").unwrap();
         // This should work — previously failed because code compared ".json3" with "json3"
         let result = find_subtitle(&dir, "id");
-        assert!(result.is_some(), "Bug #5 regression: find_subtitle returned None for .json3 file");
+        assert!(
+            result.is_some(),
+            "Bug #5 regression: find_subtitle returned None for .json3 file"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -692,18 +727,39 @@ mod tests {
         // Requesting Indonesian — should find it among 10 languages
         let result = find_subtitle(&dir, "id");
         assert!(result.is_some());
-        let name = result.unwrap().file_name().unwrap().to_string_lossy().to_string();
-        assert!(name.contains("id"), "Expected Indonesian subtitle, got: {}", name);
+        let name = result
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(
+            name.contains("id"),
+            "Expected Indonesian subtitle, got: {}",
+            name
+        );
 
         // Requesting English — should find it
         let result = find_subtitle(&dir, "en");
         assert!(result.is_some());
-        let name = result.unwrap().file_name().unwrap().to_string_lossy().to_string();
-        assert!(name.contains("en"), "Expected English subtitle, got: {}", name);
+        let name = result
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(
+            name.contains("en"),
+            "Expected English subtitle, got: {}",
+            name
+        );
 
         // Requesting non-existent language — should fallback to any
         let result = find_subtitle(&dir, "ru");
-        assert!(result.is_some(), "Should fallback to any available subtitle");
+        assert!(
+            result.is_some(),
+            "Should fallback to any available subtitle"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

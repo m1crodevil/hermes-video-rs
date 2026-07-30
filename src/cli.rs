@@ -2,7 +2,9 @@ use clap::{Parser, ValueEnum};
 
 /// Validate resolution: 128-4096 pixels
 fn validate_resolution(s: &str) -> Result<u32, String> {
-    let val: u32 = s.parse().map_err(|_| format!("'{s}' is not a valid number"))?;
+    let val: u32 = s
+        .parse()
+        .map_err(|_| format!("'{s}' is not a valid number"))?;
     if val < 128 {
         return Err("resolution must be at least 128 pixels".to_string());
     }
@@ -14,7 +16,10 @@ fn validate_resolution(s: &str) -> Result<u32, String> {
 
 /// Watch a video and analyze it
 #[derive(Parser)]
-#[command(name = "watch", about = "Download, extract frames, and transcribe a video")]
+#[command(
+    name = "watch",
+    about = "Download, extract frames, and transcribe a video"
+)]
 pub struct Cli {
     /// Video URL or local file path
     pub source: String,
@@ -59,12 +64,6 @@ pub struct Cli {
     /// Extracts frames ONLY at these timestamps. Without this flag, no frames are extracted.
     #[arg(long)]
     pub timestamps: Option<String>,
-}
-
-#[derive(Clone, Debug, ValueEnum)]
-pub enum WhisperBackend {
-    Groq,
-    Openai,
 }
 
 #[derive(Clone, Debug, PartialEq, ValueEnum)]

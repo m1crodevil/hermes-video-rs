@@ -71,7 +71,7 @@ fn classify_position_str(start_sec: f64, end_sec: f64, timestamp: f64) -> String
 /// - Per-frame scores mapping each extracted frame to its scene's significance
 pub fn write_scene_scores(
     boundaries: &[SceneBoundary],
-    frame_timestamps: &[(String, f64)],  // (path, timestamp)
+    frame_timestamps: &[(String, f64)], // (path, timestamp)
     duration: f64,
     fps: f64,
     detection_time_ms: u64,
@@ -172,16 +172,23 @@ impl SceneBoundary {
 
     /// Create with scoring data from av-scenechange library.
     pub fn with_score(
-        start_sec: f64, end_sec: f64, _fps: f64,
-        frame_start: u64, frame_end: u64,
-        inter_cost: f64, imp_block_cost: f64,
-        backward_adjusted_cost: f64, forward_adjusted_cost: f64,
+        start_sec: f64,
+        end_sec: f64,
+        _fps: f64,
+        frame_start: u64,
+        frame_end: u64,
+        inter_cost: f64,
+        imp_block_cost: f64,
+        backward_adjusted_cost: f64,
+        forward_adjusted_cost: f64,
         threshold: f64,
     ) -> Self {
         Self {
-            start_sec, end_sec,
+            start_sec,
+            end_sec,
             duration_sec: end_sec - start_sec,
-            frame_start, frame_end,
+            frame_start,
+            frame_end,
             inter_cost: Some(inter_cost),
             imp_block_cost: Some(imp_block_cost),
             backward_adjusted_cost: Some(backward_adjusted_cost),
@@ -254,9 +261,9 @@ fn detect_with_av_scenechange(video_path: &Path, fps: f64) -> Result<SceneDetect
     let mut decoder = match Decoder::from_file(video_path) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("[watch2] av-scenechange decoder init failed: {e}");
-            eprintln!("[watch2] Falling back to ffmpeg scene detection");
-            return detect_with_ffmpeg(video_path, fps);
+            return Err(WatchError::Ffmpeg(format!(
+                "av-scenechange decoder init failed: {e}"
+            )));
         }
     };
 
@@ -273,9 +280,9 @@ fn detect_with_av_scenechange(video_path: &Path, fps: f64) -> Result<SceneDetect
     let results = match av_scenechange::detect_scene_changes::<u8>(&mut decoder, opts, None, None) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("[watch2] av-scenechange detection failed: {e}");
-            eprintln!("[watch2] Falling back to ffmpeg scene detection");
-            return detect_with_ffmpeg(video_path, fps);
+            return Err(WatchError::Ffmpeg(format!(
+                "av-scenechange detection failed: {e}"
+            )));
         }
     };
 
@@ -325,12 +332,6 @@ fn detect_with_av_scenechange(video_path: &Path, fps: f64) -> Result<SceneDetect
     })
 }
 
-/// Fallback: ffmpeg scene detection (stub — scene.rs deleted)
-fn detect_with_ffmpeg(_video_path: &Path, _fps: f64) -> Result<SceneDetectionResult> {
-    Err(WatchError::Ffmpeg("ffmpeg scene detection not available (module removed)".into()))
-}
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,9 +342,16 @@ mod tests {
         let back = significance * 0.25;
         let fwd = significance * 0.25;
         SceneBoundary::with_score(
-            start, end, 24.0,
-            (start * 24.0) as u64, (end * 24.0) as u64,
-            inter, imp, back, fwd, 0.15,
+            start,
+            end,
+            24.0,
+            (start * 24.0) as u64,
+            (end * 24.0) as u64,
+            inter,
+            imp,
+            back,
+            fwd,
+            0.15,
         )
     }
 
@@ -391,17 +399,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("scene_scores.json");
 
-        let boundaries = vec![
-            make_boundary(0.0, 20.0, 0.6),
-        ];
+        let boundaries = vec![make_boundary(0.0, 20.0, 0.6)];
 
         // Frame at start of scene (AtCut)
         // Frame in middle (MidScene)
         // Frame near end (LateScene)
         let frame_timestamps = vec![
-            ("f1.jpg".to_string(), 0.5),   // AtCut
-            ("f2.jpg".to_string(), 10.0),  // MidScene
-            ("f3.jpg".to_string(), 18.5),  // LateScene
+            ("f1.jpg".to_string(), 0.5),  // AtCut
+            ("f2.jpg".to_string(), 10.0), // MidScene
+            ("f3.jpg".to_string(), 18.5), // LateScene
         ];
 
         write_scene_scores(&boundaries, &frame_timestamps, 20.0, 24.0, 0, &path).unwrap();
@@ -424,9 +430,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("scene_scores.json");
 
-        let boundaries = vec![
-            make_boundary(0.0, 10.0, 0.5),
-        ];
+        let boundaries = vec![make_boundary(0.0, 10.0, 0.5)];
 
         let frame_timestamps: Vec<(String, f64)> = vec![];
 
@@ -441,10 +445,7 @@ mod tests {
 
     #[test]
     fn test_significance_calculation() {
-        let b = SceneBoundary::with_score(
-            0.0, 10.0, 24.0, 0, 240,
-            0.1, 0.05, 0.08, 0.12, 0.15,
-        );
+        let b = SceneBoundary::with_score(0.0, 10.0, 24.0, 0, 240, 0.1, 0.05, 0.08, 0.12, 0.15);
         let sig = b.significance();
         // significance = inter_cost + imp_block_cost * 10 + backward + forward
         // = 0.1 + 0.05*10 + 0.08 + 0.12 = 0.1 + 0.5 + 0.08 + 0.12 = 0.8
