@@ -41,3 +41,52 @@ pub(crate) fn scale_filter(resolution: u32) -> String {
         "scale=w='min({resolution},iw)':h='min({MAX_READ_DIMENSION},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2"
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn even_indices_zero_count() {
+        assert_eq!(even_indices(0, 5), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn even_indices_zero_n() {
+        assert_eq!(even_indices(5, 0), vec![0]);
+    }
+
+    #[test]
+    fn even_indices_n_gte_count() {
+        assert_eq!(even_indices(3, 10), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn even_indices_three_of_ten() {
+        assert_eq!(even_indices(10, 3), vec![0, 4, 9]);
+    }
+
+    #[test]
+    fn even_indices_ten_of_hundred() {
+        let result = even_indices(100, 10);
+        assert_eq!(result.len(), 10);
+        assert_eq!(result[0], 0);
+        assert_eq!(result[9], 99);
+        for i in 1..result.len() {
+            assert!(result[i] > result[i - 1]);
+        }
+    }
+
+    #[test]
+    fn even_indices_one_of_one() {
+        assert_eq!(even_indices(1, 1), vec![0]);
+    }
+
+    #[test]
+    fn scale_filter_contains_expected_values() {
+        let filter = scale_filter(512);
+        assert!(filter.starts_with("scale="));
+        assert!(filter.contains("512"));
+        assert!(filter.contains("1998"));
+    }
+}

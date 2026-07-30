@@ -802,4 +802,70 @@ mod tests {
     fn test_subtitle_lang_pattern_french() {
         assert_eq!(subtitle_lang_pattern("fr"), "fr.*");
     }
+
+    #[test]
+    fn test_subtitle_lang_pattern_en_us() {
+        assert_eq!(subtitle_lang_pattern("en-US"), "en.*");
+    }
+
+    #[test]
+    fn test_subtitle_lang_pattern_zh_hans() {
+        assert_eq!(subtitle_lang_pattern("zh-Hans"), "zh.*");
+    }
+
+    // ── sanitize_url tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_sanitize_url_strips_null_bytes() {
+        assert_eq!(
+            sanitize_url("http://example.com/\x00video"),
+            "http://example.com/video"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_url_strips_newline_tab() {
+        assert_eq!(
+            sanitize_url("http://example.com/\n\tvideo"),
+            "http://example.com/video"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_url_normal_unchanged() {
+        let url = "https://www.youtube.com/watch?v=abc123";
+        assert_eq!(sanitize_url(url), url);
+    }
+
+    #[test]
+    fn test_sanitize_url_empty_string() {
+        assert_eq!(sanitize_url(""), "");
+    }
+
+    // ── is_url tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_url_https() {
+        assert!(is_url("https://www.youtube.com/watch?v=abc"));
+    }
+
+    #[test]
+    fn test_is_url_http() {
+        assert!(is_url("http://example.com/video.mp4"));
+    }
+
+    #[test]
+    fn test_is_url_local_path() {
+        assert!(!is_url("/local/path/video.mp4"));
+    }
+
+    #[test]
+    fn test_is_url_ftp() {
+        assert!(!is_url("ftp://server.com/file"));
+    }
+
+    #[test]
+    fn test_is_url_flag() {
+        assert!(!is_url("--no-playlist"));
+    }
 }

@@ -460,4 +460,72 @@ mod tests {
         assert_eq!(classify_position_str(10.0, 30.0, 20.0), "MidScene");
         assert_eq!(classify_position_str(10.0, 30.0, 28.0), "LateScene");
     }
+
+    #[test]
+    fn classify_position_zero_duration() {
+        // start == end == timestamp -> since_start = 0.0, |0.0| < 1.0 -> AtCut
+        assert_eq!(classify_position_str(5.0, 5.0, 5.0), "AtCut");
+    }
+
+    #[test]
+    fn significance_all_none() {
+        let b = SceneBoundary::new(0.0, 10.0, 24.0, 0, 240);
+        assert!((b.significance() - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn significance_only_inter_cost() {
+        let mut b = SceneBoundary::new(0.0, 10.0, 24.0, 0, 240);
+        b.inter_cost = Some(0.42);
+        assert!((b.significance() - 0.42).abs() < 0.001);
+    }
+
+    #[test]
+    fn significance_all_scores_weighted_sum() {
+        let b = SceneBoundary::with_score(
+            0.0, 10.0, 24.0, 0, 240, 0.1,  // inter_cost
+            0.05, // imp_block_cost
+            0.08, // backward_adjusted_cost
+            0.12, // forward_adjusted_cost
+            0.15, // threshold (not in formula)
+        );
+        // inter + imp*10 + backward + forward = 0.1 + 0.5 + 0.08 + 0.12 = 0.8
+        let sig = b.significance();
+        assert!((sig - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn timestamps_to_boundaries_empty() {
+        let bounds = timestamps_to_boundaries(&[], 24.0, 60.0);
+        assert!(bounds.is_empty());
+    }
+
+    #[test]
+    fn timestamps_to_boundaries_single() {
+        let bounds = timestamps_to_boundaries(&[5.0], 24.0, 10.0);
+        assert_eq!(bounds.len(), 1);
+        assert!((bounds[0].start_sec - 5.0).abs() < 0.001);
+        assert!((bounds[0].end_sec - 10.0).abs() < 0.001);
+        assert_eq!(bounds[0].frame_start, (5.0 * 24.0) as u64);
+        assert_eq!(bounds[0].frame_end, (10.0 * 24.0) as u64);
+    }
+
+    #[test]
+    fn timestamps_to_boundaries_multiple_sorted() {
+        let bounds = timestamps_to_boundaries(&[2.0, 5.0, 8.0], 24.0, 10.0);
+        assert_eq!(bounds.len(), 3);
+        // First boundary: 2.0 -> 5.0
+        assert!((bounds[0].start_sec - 2.0).abs() < 0.001);
+        assert!((bounds[0].end_sec - 5.0).abs() < 0.001);
+        // Second boundary: 5.0 -> 8.0
+        assert!((bounds[1].start_sec - 5.0).abs() < 0.001);
+        assert!((bounds[1].end_sec - 8.0).abs() < 0.001);
+        // Third boundary: 8.0 -> duration (10.0)
+        assert!((bounds[2].start_sec - 8.0).abs() < 0.001);
+        assert!((bounds[2].end_sec - 10.0).abs() < 0.001);
+        // Verify sorted ascending
+        for i in 1..bounds.len() {
+            assert!(bounds[i].start_sec >= bounds[i - 1].start_sec);
+        }
+    }
 }

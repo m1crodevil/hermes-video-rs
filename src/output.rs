@@ -158,6 +158,7 @@ impl WatchReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn test_empty_report() {
         let report = WatchReport {
@@ -186,5 +187,170 @@ mod tests {
         assert!(md.contains("**Uploader:** TestChannel"));
         assert!(md.contains("**Language:** en"));
         assert!(md.contains("**Engine:** scene-or-uniform"));
+    }
+
+    #[test]
+    fn test_watch_report_json_roundtrip_title() {
+        // WatchReport doesn't derive Deserialize, so we roundtrip via serde_json::Value
+        let report = WatchReport {
+            title: "Roundtrip Test Title".into(),
+            source: "https://example.com/video".into(),
+            detail: "balanced".into(),
+            uploader: Some("Creator".into()),
+            language: Some("en".into()),
+            engine: Some("uniform".into()),
+            frames: vec![],
+            frames_dropped: 0,
+            transcript: vec![],
+            transcript_source: "none".into(),
+            duration: 42.5,
+            working_dir: "/tmp".into(),
+            warnings: vec![],
+            key_moments: None,
+            key_moment_stats: None,
+            scene_boundaries: None,
+            scene_count: None,
+            scene_scores_path: None,
+        };
+
+        let json_str = report.to_json();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).expect("valid JSON");
+
+        assert_eq!(parsed["title"].as_str().unwrap(), "Roundtrip Test Title");
+        assert_eq!(
+            parsed["source"].as_str().unwrap(),
+            "https://example.com/video"
+        );
+        assert_eq!(parsed["duration"].as_f64().unwrap(), 42.5);
+    }
+
+    #[test]
+    fn test_empty_report_valid_json() {
+        let report = WatchReport {
+            title: "Empty".into(),
+            source: "none".into(),
+            detail: "none".into(),
+            uploader: None,
+            language: None,
+            engine: None,
+            frames: vec![],
+            frames_dropped: 0,
+            transcript: vec![],
+            transcript_source: "none".into(),
+            duration: 0.0,
+            working_dir: "/tmp".into(),
+            warnings: vec![],
+            key_moments: None,
+            key_moment_stats: None,
+            scene_boundaries: None,
+            scene_count: None,
+            scene_scores_path: None,
+        };
+
+        let json_str = report.to_json();
+        // Should parse without error
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("empty report should produce valid JSON");
+        assert_eq!(parsed["title"].as_str().unwrap(), "Empty");
+        assert_eq!(parsed["duration"].as_f64().unwrap(), 0.0);
+    }
+
+    #[test]
+    fn test_none_fields_omitted_from_json() {
+        let report = WatchReport {
+            title: "Omit Test".into(),
+            source: "s".into(),
+            detail: "d".into(),
+            uploader: None,
+            language: None,
+            engine: None,
+            frames: vec![],
+            frames_dropped: 0,
+            transcript: vec![],
+            transcript_source: "none".into(),
+            duration: 10.0,
+            working_dir: "/tmp".into(),
+            warnings: vec![],
+            key_moments: None,
+            key_moment_stats: None,
+            scene_boundaries: None,
+            scene_count: None,
+            scene_scores_path: None,
+        };
+
+        let parsed: serde_json::Value = serde_json::from_str(&report.to_json()).unwrap();
+
+        // Option fields set to None should NOT appear in JSON
+        assert!(
+            parsed.get("uploader").is_none(),
+            "uploader should be omitted when None"
+        );
+        assert!(
+            parsed.get("language").is_none(),
+            "language should be omitted when None"
+        );
+        assert!(
+            parsed.get("engine").is_none(),
+            "engine should be omitted when None"
+        );
+        assert!(
+            parsed.get("key_moments").is_none(),
+            "key_moments should be omitted when None"
+        );
+        assert!(
+            parsed.get("key_moment_stats").is_none(),
+            "key_moment_stats should be omitted when None"
+        );
+        assert!(
+            parsed.get("scene_boundaries").is_none(),
+            "scene_boundaries should be omitted when None"
+        );
+        assert!(
+            parsed.get("scene_count").is_none(),
+            "scene_count should be omitted when None"
+        );
+        assert!(
+            parsed.get("scene_scores_path").is_none(),
+            "scene_scores_path should be omitted when None"
+        );
+
+        // But required fields should still be present
+        assert!(parsed.get("title").is_some());
+        assert!(parsed.get("source").is_some());
+        assert!(parsed.get("frames").is_some());
+    }
+
+    #[test]
+    fn test_some_fields_present_in_json() {
+        let report = WatchReport {
+            title: "Some Fields".into(),
+            source: "s".into(),
+            detail: "d".into(),
+            uploader: Some("Creator".into()),
+            language: Some("ja".into()),
+            engine: Some("groq".into()),
+            frames: vec![],
+            frames_dropped: 0,
+            transcript: vec![],
+            transcript_source: "none".into(),
+            duration: 5.0,
+            working_dir: "/tmp".into(),
+            warnings: vec!["test warning".into()],
+            key_moments: Some(vec![]),
+            key_moment_stats: None,
+            scene_boundaries: None,
+            scene_count: Some(3),
+            scene_scores_path: None,
+        };
+
+        let parsed: serde_json::Value = serde_json::from_str(&report.to_json()).unwrap();
+
+        assert_eq!(parsed["uploader"].as_str().unwrap(), "Creator");
+        assert_eq!(parsed["language"].as_str().unwrap(), "ja");
+        assert_eq!(parsed["engine"].as_str().unwrap(), "groq");
+        assert_eq!(parsed["scene_count"].as_u64().unwrap(), 3);
+        // warnings is a non-empty Vec, should be present
+        assert!(parsed["warnings"].is_array());
+        assert_eq!(parsed["warnings"].as_array().unwrap().len(), 1);
     }
 }

@@ -146,3 +146,62 @@ impl WatchConfig {
         }
     }
 }
+
+// ── Tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_placeholder_your_api_key_here() {
+        assert!(is_placeholder("your_api_key_here"));
+    }
+
+    #[test]
+    fn test_is_placeholder_sk_your_key() {
+        assert!(is_placeholder("sk-your-key"));
+    }
+
+    #[test]
+    fn test_is_placeholder_sk_your_prefix() {
+        assert!(is_placeholder("sk-your-abcdefg"));
+    }
+
+    #[test]
+    fn test_is_placeholder_real_groq_key() {
+        assert!(!is_placeholder("gsk_abc123def456ghi"));
+    }
+
+    #[test]
+    fn test_is_placeholder_empty_string() {
+        assert!(is_placeholder(""));
+    }
+
+    #[test]
+    fn test_is_placeholder_changeme() {
+        assert!(is_placeholder("changeme"));
+    }
+
+    #[test]
+    fn test_is_placeholder_true_false_yes_no() {
+        // These are intentional non-placeholder values used as boolean indicators
+        assert!(!is_placeholder("true"));
+        assert!(!is_placeholder("false"));
+        assert!(!is_placeholder("yes"));
+        assert!(!is_placeholder("no"));
+    }
+
+    #[test]
+    fn test_is_placeholder_real_long_key() {
+        assert!(!is_placeholder(
+            "sk-proj-abcdefghijklmnopqrstuvwxyz1234567890"
+        ));
+    }
+
+    #[test]
+    fn test_is_placeholder_with_whitespace() {
+        assert!(is_placeholder("  your_api_key_here  "));
+        assert!(is_placeholder("  "));
+    }
+}

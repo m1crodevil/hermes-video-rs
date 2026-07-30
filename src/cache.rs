@@ -491,4 +491,69 @@ mod tests {
         let evicted = cache.evict().unwrap();
         assert!(!evicted.is_empty());
     }
+
+    // ── normalize_url edge cases ────────────────────────────────────
+
+    #[test]
+    fn test_normalize_url_youtu_be_without_tracking() {
+        // youtu.be short URL with no tracking params
+        assert_eq!(
+            normalize_url("https://youtu.be/abc"),
+            "https://www.youtube.com/watch?v=abc"
+        );
+    }
+
+    #[test]
+    fn test_normalize_url_si_tracking_stripped() {
+        // URL with si= tracking param should be stripped entirely
+        assert_eq!(
+            normalize_url("https://www.youtube.com/watch?v=abc123&si=tracking123&t=60"),
+            "https://www.youtube.com/watch?v=abc123&t=60"
+        );
+    }
+
+    #[test]
+    fn test_normalize_url_list_playlist_stripped() {
+        // URL with list= playlist param should be stripped entirely
+        assert_eq!(
+            normalize_url("https://www.youtube.com/watch?v=abc123&list=PLxxx&index=5"),
+            "https://www.youtube.com/watch?v=abc123&index=5"
+        );
+    }
+
+    #[test]
+    fn test_normalize_url_non_youtube_unchanged() {
+        // Non-YouTube URLs should pass through unchanged
+        assert_eq!(
+            normalize_url("https://vimeo.com/123456"),
+            "https://vimeo.com/123456"
+        );
+        assert_eq!(
+            normalize_url("https://example.com/video.mp4?token=abc"),
+            "https://example.com/video.mp4?token=abc"
+        );
+    }
+
+    #[test]
+    fn test_normalize_url_multiple_tracking_params_stripped() {
+        // Both si= and list= should be stripped together
+        assert_eq!(
+            normalize_url("https://www.youtube.com/watch?v=xyz&si=track1&list=PLyyy&t=30"),
+            "https://www.youtube.com/watch?v=xyz&t=30"
+        );
+        // When only tracking params remain, the entire query string is removed
+        assert_eq!(
+            normalize_url("https://www.youtube.com/watch?v=xyz&si=track1&list=PLyyy"),
+            "https://www.youtube.com/watch?v=xyz"
+        );
+    }
+
+    #[test]
+    fn test_normalize_url_all_query_params_stripped() {
+        // When all params are tracking, the query string should be removed
+        assert_eq!(
+            normalize_url("https://www.youtube.com/watch?v=abc&si=123&list=PL456"),
+            "https://www.youtube.com/watch?v=abc"
+        );
+    }
 }
