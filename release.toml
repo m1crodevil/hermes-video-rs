@@ -1,13 +1,6 @@
-# cargo-release configuration — see https://github.com/crate-ci/cargo-release
-# Usage: cargo release patch|minor|major --execute
-#
-# watch2 is a binary-only tool (not published on crates.io), so:
-# - publish is disabled (no crates.io upload, no API token needed)
-# - tag + push are handled by cargo-release
-
 publish = false
 push-remote = "origin"
 tag-name = "v{{version}}"
 pre-release-replacements = [
-  { file = "Cargo.toml", search = "version = \"{{version}}\"" },
+  { file = "README.md", search = "version-\\d+\\.\\d+\\.\\d+-blue", replace = "version-{{version}}-blue" },
 ]
