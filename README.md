@@ -256,7 +256,25 @@ sudo cp target/release/watch2 /usr/local/bin/
 
 # Run with verbose output
 RUST_LOG=debug cargo run -- --help
+
+# Check installed version
+watch2 --version
 ```
+
+## Versioning & Releases
+
+- **Source of truth:** the `version` field in `Cargo.toml` (SemVer 2.0.0).
+- **Tags:** annotated git tags `vX.Y.Z` point to the released commit (e.g. `v8.1.0`).
+- **Releases:** GitHub Releases mirror the tags, with notes generated from `CHANGELOG.md`.
+- **Changelog:** maintained with [git-cliff](https://github.com/orhun/git-cliff) (`git-cliff --output CHANGELOG.md`) from conventional commits.
+- **Automation:** [cargo-release](https://github.com/crate-ci/cargo-release) with `release.toml` (publish disabled — binary only). Bump + tag + push:
+
+```bash
+cargo install cargo-release
+cargo release patch --execute   # or minor / major
+```
+
+Check the current version: `watch2 --version`
 
 ---
 
