@@ -17,7 +17,8 @@ fn validate_resolution(s: &str) -> Result<u32, String> {
 /// Watch a video and analyze it
 #[derive(Parser)]
 #[command(
-    name = "watch",
+    name = "watch2",
+    version,
     about = "Download, extract frames, and transcribe a video"
 )]
 pub struct Cli {
