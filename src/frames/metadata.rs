@@ -52,11 +52,22 @@ pub fn get_metadata(video_path: &Path) -> Result<VideoMetadata> {
         .iter()
         .find(|s| s["codec_type"].as_str() == Some("video"));
 
-    let duration = fmt["duration"].as_f64().unwrap_or(
-        video_stream
-            .and_then(|s| s["duration"].as_f64())
-            .unwrap_or(0.0),
-    );
+    let duration = fmt["duration"]
+        .as_f64()
+        .or_else(|| {
+            fmt["duration"]
+                .as_str()
+                .and_then(|s| s.parse::<f64>().ok())
+        })
+        .unwrap_or_else(|| {
+            video_stream
+                .and_then(|s| {
+                    s["duration"]
+                        .as_f64()
+                        .or_else(|| s["duration"].as_str().and_then(|t| t.parse::<f64>().ok()))
+                })
+                .unwrap_or(0.0)
+        });
 
     if duration <= 0.0 {
         return Err(WatchError::Ffmpeg(format!(
