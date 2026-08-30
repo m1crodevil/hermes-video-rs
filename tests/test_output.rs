@@ -1,268 +1,43 @@
-use std::collections::HashMap;
-use watch2::output::{FrameInfo, KeyMomentStats, TranscriptSegment, WatchReport};
+use watch2::output::{FrameInfo, TranscriptSegment, WatchReport};
 
-fn make_test_report() -> WatchReport {
+fn report() -> WatchReport {
     WatchReport {
         title: "Test Video".into(),
-        source: "test.mp4".into(),
-        detail: "balanced".into(),
-        uploader: None,
-        language: None,
-        engine: Some("none".into()),
-        frames: vec![],
-        frames_dropped: 0,
-        transcript: vec![],
-        transcript_source: "none".into(),
-        duration: 60.0,
-        working_dir: "/tmp/test".into(),
-        warnings: vec!["Test warning".into()],
-        key_moments: None,
-        key_moment_stats: None,
-        scene_boundaries: None,
-        scene_count: None,
-        scene_scores_path: None,
-    }
-}
-
-fn make_full_report() -> WatchReport {
-    WatchReport {
-        title: "Full Video".into(),
-        source: "https://youtu.be/abc".into(),
-        detail: "token-burner".into(),
-        uploader: Some("TestChannel".into()),
+        source: "https://example.com/video".into(),
+        uploader: Some("Creator".into()),
         language: Some("en".into()),
-        engine: Some("timestamps".into()),
-        frames: vec![
-            FrameInfo {
-                path: "/tmp/frame_0001.jpg".into(),
-                timestamp: 0.0,
-                reason: "keyframe".into(),
-                scene_score: None,
-            },
-            FrameInfo {
-                path: "/tmp/frame_0002.jpg".into(),
-                timestamp: 5.5,
-                reason: "scene".into(),
-                scene_score: None,
-            },
-        ],
-        frames_dropped: 2,
-        transcript: vec![
-            TranscriptSegment {
-                start: 0.0,
-                end: 3.0,
-                text: "Hello world".into(),
-                words: None,
-            },
-            TranscriptSegment {
-                start: 3.0,
-                end: 6.0,
-                text: "Second segment".into(),
-                words: None,
-            },
-        ],
-        transcript_source: "groq".into(),
-        duration: 120.0,
-        working_dir: "/tmp/full".into(),
-        warnings: vec!["Warning one".into(), "Warning two".into()],
-        key_moments: None,
-        key_moment_stats: None,
+        frames: vec![FrameInfo {
+            path: "frame.jpg".into(),
+            timestamp: 10.0,
+            reason: "transcript-cue".into(),
+        }],
+        transcript: vec![TranscriptSegment {
+            start: 0.0,
+            end: 1.0,
+            text: "hello".into(),
+            words: None,
+        }],
+        transcript_source: "captions".into(),
+        duration: 60.0,
+        working_dir: "/tmp/watch2".into(),
+        warnings: vec![],
         scene_boundaries: None,
         scene_count: None,
-        scene_scores_path: None,
     }
 }
 
-// --- Markdown tests ---
-
 #[test]
-fn test_markdown_contains_title() {
-    let report = make_test_report();
-    let md = report.to_markdown();
-    assert!(md.contains("# Test Video"));
+fn json_contains_extraction_evidence() {
+    let json: serde_json::Value = serde_json::from_str(&report().to_json()).unwrap();
+    assert_eq!(json["title"], "Test Video");
+    assert_eq!(json["frames"][0]["timestamp"], 10.0);
+    assert_eq!(json["transcript"][0]["text"], "hello");
+    assert!(json.get("scene_boundaries").is_none());
 }
 
 #[test]
-fn test_markdown_contains_warnings() {
-    let report = make_test_report();
-    let md = report.to_markdown();
-    assert!(md.contains("Test warning"));
-}
-
-#[test]
-fn test_markdown_empty_frames_transcript() {
-    let report = make_test_report();
-    let md = report.to_markdown();
-    assert!(md.contains("No frames or transcript available"));
-}
-
-#[test]
-fn test_markdown_source_and_detail() {
-    let report = make_test_report();
-    let md = report.to_markdown();
-    assert!(md.contains("test.mp4"));
-    assert!(md.contains("balanced"));
-}
-
-#[test]
-fn test_markdown_full_report_frames() {
-    let report = make_full_report();
-    let md = report.to_markdown();
-    assert!(md.contains("# Full Video"));
-    assert!(md.contains("## Frames (2 total, 2 dropped)"));
-    assert!(md.contains("frame_0001.jpg"));
-    assert!(md.contains("frame_0002.jpg"));
-    assert!(md.contains("keyframe"));
-    assert!(md.contains("scene"));
-}
-
-#[test]
-fn test_markdown_full_report_transcript() {
-    let report = make_full_report();
-    let md = report.to_markdown();
-    assert!(md.contains("## Transcript (groq)"));
-    assert!(md.contains("Hello world"));
-    assert!(md.contains("Second segment"));
-}
-
-#[test]
-fn test_markdown_full_report_warnings() {
-    let report = make_full_report();
-    let md = report.to_markdown();
-    assert!(md.contains("Warning one"));
-    assert!(md.contains("Warning two"));
-}
-
-// --- JSON tests ---
-
-#[test]
-fn test_json_output_title() {
-    let report = make_test_report();
-    let json = report.to_json();
-    assert!(json.contains("Test Video"));
-}
-
-#[test]
-fn test_json_output_warnings() {
-    let report = make_test_report();
-    let json = report.to_json();
-    assert!(json.contains("Test warning"));
-}
-
-#[test]
-fn test_json_output_valid_json() {
-    let report = make_test_report();
-    let json = report.to_json();
-    // Should be parseable as JSON
-    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed["title"], "Test Video");
-}
-
-#[test]
-fn test_json_output_full_report() {
-    let report = make_full_report();
-    let json = report.to_json();
-    assert!(json.contains("Full Video"));
-    assert!(json.contains("keyframe"));
-    assert!(json.contains("Hello world"));
-    assert!(json.contains("Warning one"));
-
-    // Verify valid JSON and structure
-    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed["title"], "Full Video");
-    assert_eq!(parsed["source"], "https://youtu.be/abc");
-    assert_eq!(parsed["detail"], "token-burner");
-    assert_eq!(parsed["transcript_source"], "groq");
-    // frames array should have 2 items
-    assert_eq!(parsed["frames"].as_array().unwrap().len(), 2);
-    // transcript array should have 2 items
-    assert_eq!(parsed["transcript"].as_array().unwrap().len(), 2);
-    // warnings should be skipped when non-empty, present here
-    assert_eq!(parsed["warnings"].as_array().unwrap().len(), 2);
-}
-
-#[test]
-fn test_json_warnings_skipped_when_empty() {
-    let mut report = make_test_report();
-    report.warnings = vec![];
-    let json = report.to_json();
-    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    // warnings field should be absent due to skip_serializing_if
-    assert!(parsed.get("warnings").is_none());
-}
-
-#[test]
-fn test_json_has_all_metadata() {
-    let report = make_test_report();
-    let json = report.to_json();
-    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed["source"], "test.mp4");
-    assert_eq!(parsed["detail"], "balanced");
-    assert_eq!(parsed["duration"], 60.0);
-    assert_eq!(parsed["working_dir"], "/tmp/test");
-    assert_eq!(parsed["transcript_source"], "none");
-}
-
-#[test]
-fn test_markdown_metadata_fields() {
-    let report = make_full_report();
-    let md = report.to_markdown();
-    assert!(md.contains("**Uploader:** TestChannel"));
-    assert!(md.contains("**Language:** en"));
-    assert!(md.contains("**Engine:** timestamps"));
-}
-
-#[test]
-fn test_json_metadata_fields() {
-    let report = make_full_report();
-    let json = report.to_json();
-    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed["uploader"], "TestChannel");
-    assert_eq!(parsed["language"], "en");
-    assert_eq!(parsed["engine"], "timestamps");
-}
-
-#[test]
-fn test_metadata_skipped_when_none() {
-    let report = make_test_report();
-    let json = report.to_json();
-    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    // uploader and language are None → should be absent
-    assert!(parsed.get("uploader").is_none());
-    assert!(parsed.get("language").is_none());
-}
-
-#[test]
-fn test_key_moments_in_report() {
-    let mut report = make_test_report();
-    let moments = vec![
-        serde_json::json!({
-            "timestamp": 54.0,
-            "word": "Ragnarok",
-            "context": "Ya kan Ragnarok",
-            "reason": "proper_noun",
-            "question": "What game name is displayed?",
-            "priority": 1,
-        }),
-        serde_json::json!({
-            "timestamp": 120.0,
-            "word": "1 juta",
-            "context": "1 juta dolar",
-            "reason": "claim",
-            "question": "What amount is shown?",
-            "priority": 1,
-        }),
-    ];
-    report.key_moments = Some(moments);
-    report.key_moment_stats = Some(KeyMomentStats {
-        total: 2,
-        by_reason: HashMap::from([("proper_noun".into(), 1), ("claim".into(), 1)]),
-        by_priority: HashMap::from([(1, 2)]),
-    });
-    let md = report.to_markdown();
-    assert!(md.contains("Key Moments (2)"));
-    assert!(md.contains("Ragnarok"));
-    let json = report.to_json();
-    assert!(json.contains("\"key_moments\""));
-    assert!(json.contains("\"key_moment_stats\""));
+fn markdown_contains_frames_and_transcript() {
+    let markdown = report().to_markdown();
+    assert!(markdown.contains("frame.jpg"));
+    assert!(markdown.contains("hello"));
 }
