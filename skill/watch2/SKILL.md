@@ -34,7 +34,7 @@ linked_files:
 
 # /watch2
 
-Rust-powered video analysis. Faster startup (~5ms), smaller memory (~5-15MB), single binary (5.4MB).
+Rust-powered video analysis. Faster startup (~20ms), smaller memory (~5-15MB), single binary (~6.2MB).
 
 ## Quick Reference
 
@@ -125,7 +125,7 @@ Channel: [Uploader] · Duration: [time]
 - Use `·` (middle dot) as separator
 - Keep metadata compact on 1-2 lines
 - Add `---` separator before and after main content
-- **NEVER** use raw markdown table syntax in Telegram output
+- **NEVER** use raw markdown table syntax in Telegram output UNLESS rich_messages is enabled (gateway.platforms.telegram.extra.rich_messages: true)
 - **Stats block is OPTIONAL** — include only if user asks
 - **NEVER output** cross-reference tables, correction sections, or verification trails
 
@@ -195,7 +195,11 @@ jq '{title, uploader, duration, scene_count}' /tmp/watch-XXX/report.json
 jq -r '.transcript[] | "[\(.start) → \(.end)] \(.text)"' /tmp/watch-XXX/report.json
 
 # Pass 2: After agent selects key moments (scale with duration, see moment-selection.md)
-watch2 "https://youtu.be/abc" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/watch-XXX
+watch2 "https://youtu.be/abc" --timestamps "00:30,01:15,02:45,..." --keep-video --out-dir /tmp/watch-XXX --output both
+# ⚠️ ALWAYS pass --output both on Pass 2. Without it, report.json is NOT
+# rewritten (main.rs only writes it in the Both branch) and the stale Pass 1
+# report (engine "none", frames []) stays on disk — easy to misread as "frames
+# not extracted" and trigger a pointless manual fallback.
 ```
 
 **Steps:**

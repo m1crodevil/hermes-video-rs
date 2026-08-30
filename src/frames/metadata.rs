@@ -54,11 +54,7 @@ pub fn get_metadata(video_path: &Path) -> Result<VideoMetadata> {
 
     let duration = fmt["duration"]
         .as_f64()
-        .or_else(|| {
-            fmt["duration"]
-                .as_str()
-                .and_then(|s| s.parse::<f64>().ok())
-        })
+        .or_else(|| fmt["duration"].as_str().and_then(|s| s.parse::<f64>().ok()))
         .unwrap_or_else(|| {
             video_stream
                 .and_then(|s| {
