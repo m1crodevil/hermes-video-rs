@@ -101,6 +101,12 @@ impl WatchReport {
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).expect("WatchReport is serializable")
     }
+
+    pub fn write_json(&self, work_dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+        let path = work_dir.join("report.json");
+        std::fs::write(&path, self.to_json())?;
+        Ok(path)
+    }
 }
 
 #[cfg(test)]
@@ -139,5 +145,14 @@ mod tests {
     #[test]
     fn markdown_includes_transcript() {
         assert!(report().to_markdown().contains("hello"));
+    }
+
+    #[test]
+    fn write_json_persists_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = report().write_json(dir.path()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(json["title"], "Test");
     }
 }

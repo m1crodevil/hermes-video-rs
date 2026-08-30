@@ -87,18 +87,14 @@ async fn main() -> anyhow::Result<()> {
 
     let report = pipeline::run(ctx).await?;
 
-    // Output report
-    match &output_format {
-        cli::OutputFormat::Markdown => println!("{}", report.to_markdown()),
-        cli::OutputFormat::Json => println!("{}", report.to_json()),
-        cli::OutputFormat::Both => {
-            println!("{}", report.to_markdown());
-            let json_path = work.join("report.json");
-            match std::fs::write(&json_path, report.to_json()) {
-                Ok(()) => eprintln!("[watch2] report JSON: {}", json_path.display()),
-                Err(e) => eprintln!("[watch2] failed to write JSON: {}", e),
-            }
+    let json_path = report.write_json(&work)?;
+    eprintln!("[watch2] report JSON: {}", json_path.display());
+
+    match output_format {
+        cli::OutputFormat::Markdown | cli::OutputFormat::Both => {
+            println!("{}", report.to_markdown())
         }
+        cli::OutputFormat::Json => println!("{}", report.to_json()),
     }
 
     Ok(())
