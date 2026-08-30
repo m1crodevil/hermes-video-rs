@@ -193,7 +193,7 @@ jq '.scene_boundaries[] | select(.inter_cost > 30) | {start_sec, end_sec, inter_
   - High-cost scene changes (visual transitions)
   - Hook moments, key arguments, claims/statistics
   - Topic transitions (scene changes)
-- Apply standalone check and anti-pattern filter
+- Check that each selected timestamp has enough surrounding transcript context
 
 **Step 4: Extract frames at selected timestamps**
 ```bash
@@ -250,7 +250,7 @@ String truncation uses `chars().take(N)` instead of byte slicing (`[..N]`). Mult
 - `synthesis_prompt.txt` — redundant, synthesis should be generated directly
 
 **Why it's wrong**:
-1. `report.json` from the Rust binary already contains ALL structured data (frames, key_moments, stats)
+1. `report.json` from the Rust binary contains extraction evidence: metadata, transcript, scenes, and selected frames.
 2. Writing intermediate files wastes tokens and creates confusion about source of truth
 3. The Rust binary is Python-free — using Python to generate files defeats the purpose
 
