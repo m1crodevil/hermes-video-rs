@@ -163,10 +163,6 @@ pub fn resolve_local(path: &str) -> Result<DownloadResult> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// fetch_captions  — subtitles only (skip-download), with YouTube 2026 opts
-// ---------------------------------------------------------------------------
-
 /// Build the yt-dlp `--sub-langs` pattern for a given language code.
 ///
 /// YouTube often uses "en" but auto-generated subs appear as "en.*" (e.g.
@@ -239,106 +235,6 @@ fn list_available_subtitles(url: &str, use_cookies: bool) -> (Vec<String>, Vec<S
     }
 
     (manual, auto)
-}
-
-/// Single-pass fetch: metadata + all subtitles in one yt-dlp call.
-///
-/// This replaces the previous 3-pass approach (metadata → list-subs → fetch-subs)
-/// with a single pass that fetches everything at once. We detect the video language
-/// from `info.json` instead of a separate `--list-subs` call.
-///
-/// Fallback chain for language detection:
-///   1. LLM-detected language (passed via `llm_lang`)
-///   2. `info.language` from yt-dlp metadata
-///   3. "en" (English)
-pub fn fetch_captions(
-    url: &str,
-    out_dir: &Path,
-    use_cookies: bool,
-    llm_lang: Option<&str>,
-) -> Result<DownloadResult> {
-    let url = sanitize_url(url);
-    std::fs::create_dir_all(out_dir)?;
-    let output_template = out_dir.join("video.%(ext)s").to_string_lossy().to_string();
-
-    let network_opts = ytdlp_network_opts(use_cookies);
-
-    // --- Single pass: metadata + all subtitles ---
-    let mut args: Vec<&str> = Vec::new();
-    for opt in &network_opts {
-        args.push(opt.as_str());
-    }
-    args.extend(COMMON_ARGS);
-    args.extend([
-        "--skip-download",
-        "--write-info-json",
-        "--write-subs",
-        "--write-auto-subs",
-        "--sub-langs",
-        ".*", // Fetch ALL subtitle languages
-        "--sub-format",
-        "json3/best",
-        "-o",
-        &output_template,
-        "--",
-        &url,
-    ]);
-
-    let status = Command::new("yt-dlp").args(&args).status();
-
-    match status {
-        Ok(s) if s.success() => {
-            let mut info = extract_info(out_dir);
-
-            // Override language from LLM if provided
-            if let Some(lang) = llm_lang
-                && !lang.is_empty()
-            {
-                info.language = Some(lang.to_string());
-            }
-
-            // Fallback: if no language from metadata, default to English
-            if info.language.is_none() {
-                info.language = Some("en".to_string());
-            }
-
-            // Validate language and fix if needed
-            let detected_lang = if let Some(ref lang) = info.language {
-                if is_valid_lang(lang) {
-                    lang.clone()
-                } else {
-                    eprintln!(
-                        "[watch2] detected lang '{}' not in whitelist, falling back to en",
-                        lang
-                    );
-                    info.language = Some("en".to_string());
-                    "en".to_string()
-                }
-            } else {
-                "en".to_string()
-            };
-
-            let lang_pattern = subtitle_lang_pattern(&detected_lang);
-            let lang_name = get_language_name(&detected_lang);
-            eprintln!(
-                "[watch2] subtitle language: {} ({}) — pattern: {}",
-                lang_name, detected_lang, lang_pattern
-            );
-
-            let subtitle_path = find_subtitle(out_dir, &detected_lang);
-            let title = info.title.clone();
-
-            Ok(DownloadResult {
-                video_path: None,
-                subtitle_path,
-                info,
-                title,
-                downloaded: false,
-            })
-        }
-        Ok(_) => Err(WatchError::Download("yt-dlp caption fetch failed".into())),
-        Err(e) => Err(WatchError::Download(format!("yt-dlp not found: {}", e))),
-    }
 }
 
 // ---------------------------------------------------------------------------

@@ -236,25 +236,6 @@ impl VideoCache {
         Ok(())
     }
 
-    // ── Language Cache ──────────────────────────────────────────────
-
-    /// Get cached detected language for a URL.
-    pub fn get_cached_language(&self, url: &str) -> Option<String> {
-        let key = Self::cache_key(url);
-        let path = self.cache_dir(&key).join("language.txt");
-        std::fs::read_to_string(path).ok()
-    }
-
-    /// Store detected language in cache.
-    pub fn store_language(&mut self, url: &str, lang: &str) -> Result<()> {
-        let key = Self::cache_key(url);
-        let dir = self.cache_dir(&key);
-        std::fs::create_dir_all(&dir)?;
-        let path = dir.join("language.txt");
-        std::fs::write(&path, lang)?;
-        Ok(())
-    }
-
     // ── Invalidation & Eviction ─────────────────────────────────────
 
     /// Remove a specific URL from cache.
