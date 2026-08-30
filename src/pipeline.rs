@@ -15,7 +15,6 @@ pub struct PipelineContext {
     pub work: PathBuf,
     pub download_dir: PathBuf,
     pub frames_dir: PathBuf,
-    pub start_time: std::time::Instant,
     pub cache: Option<VideoCache>,
 }
 
@@ -27,7 +26,6 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         work,
         download_dir,
         frames_dir,
-        start_time: _,
         mut cache,
     } = ctx;
 
@@ -468,7 +466,6 @@ mod tests {
             keep_video: false,
             cookies: false,
             no_whisper: false,
-            no_dedup: false,
             output: crate::cli::OutputFormat::Markdown,
             no_cache: false,
             cache_dir: None,
@@ -512,7 +509,6 @@ mod tests {
             work: PathBuf::from("/tmp/work"),
             download_dir: PathBuf::from("/tmp/work/downloads"),
             frames_dir: PathBuf::from("/tmp/work/frames"),
-            start_time: std::time::Instant::now(),
             cache: None,
         };
         assert_eq!(ctx.cli.source, "https://example.com/video.mp4");
@@ -532,7 +528,6 @@ mod tests {
             work: PathBuf::from("/tmp/work"),
             download_dir: PathBuf::from("/tmp/work/downloads"),
             frames_dir: PathBuf::from("/tmp/work/frames"),
-            start_time: std::time::Instant::now(),
             cache: Some(crate::cache::VideoCache::with_dir(PathBuf::from("/tmp/cache")).unwrap()),
         };
         assert!(ctx.cache.is_some());
@@ -547,7 +542,6 @@ mod tests {
             work: PathBuf::from("/tmp/work"),
             download_dir: PathBuf::from("/tmp/work/downloads"),
             frames_dir: PathBuf::from("/tmp/work/frames"),
-            start_time: std::time::Instant::now(),
             cache: None,
         };
         assert_eq!(ctx.cli.source, "/home/user/videos/local.mp4");

@@ -219,7 +219,6 @@ watch2 "https://youtu.be/abc" --timestamps "00:30,01:15,02:45,..." --keep-video 
 | `--keep-video` | Retain video | false |
 | `--cookies` | Chrome cookies | false |
 | `--no-whisper` | Disable Whisper | false |
-| `--no-dedup` | Keep duplicates | false |
 | `--output fmt` | markdown/json/both | markdown |
 | `--no-cache` | Disable cache | false |
 | `--cache-dir DIR` | Cache directory | `~/.cache/watch2` |

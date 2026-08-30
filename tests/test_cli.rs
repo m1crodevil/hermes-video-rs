@@ -7,7 +7,6 @@ fn test_parse_basic_url() {
     assert_eq!(cli.source, "https://youtu.be/abc");
     assert_eq!(cli.resolution, 512);
     assert!(!cli.no_whisper);
-    assert!(!cli.no_dedup);
 }
 
 #[test]
@@ -60,18 +59,6 @@ fn test_no_whisper_default_false() {
 }
 
 #[test]
-fn test_no_dedup_flag() {
-    let cli = Cli::try_parse_from(["watch", "test.mp4", "--no-dedup"]).unwrap();
-    assert!(cli.no_dedup);
-}
-
-#[test]
-fn test_no_dedup_default_false() {
-    let cli = Cli::try_parse_from(["watch", "test.mp4"]).unwrap();
-    assert!(!cli.no_dedup);
-}
-
-#[test]
 fn test_resolution_default() {
     let cli = Cli::try_parse_from(["watch", "test.mp4"]).unwrap();
     assert_eq!(cli.resolution, 512);
@@ -119,7 +106,6 @@ fn test_multiple_flags_combined() {
         "watch",
         "https://youtu.be/abc",
         "--no-whisper",
-        "--no-dedup",
         "--keep-video",
         "--output",
         "json",
@@ -131,7 +117,6 @@ fn test_multiple_flags_combined() {
     .unwrap();
     assert_eq!(cli.source, "https://youtu.be/abc");
     assert!(cli.no_whisper);
-    assert!(cli.no_dedup);
     assert!(cli.keep_video);
     assert_eq!(cli.output, OutputFormat::Json);
     assert_eq!(cli.resolution, 768);

@@ -147,7 +147,6 @@ watch2 https://vimeo.com/123 what tools does she mention?
 | `--keep-video` | Retain downloaded video after processing | false |
 | `--cookies` | Use Chrome cookies for yt-dlp (age-restricted videos) | false |
 | `--no-whisper` | Disable Whisper fallback transcription | false |
-| `--no-dedup` | Keep near-duplicate frames | false |
 | `--output markdown\|json\|both` | Output format | markdown |
 | `--no-cache` | Disable download cache | false |
 | `--cache-dir DIR` | Custom cache directory | `~/.cache/watch2` |

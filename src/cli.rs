@@ -45,10 +45,6 @@ pub struct Cli {
     #[arg(long)]
     pub no_whisper: bool,
 
-    /// Disable near-duplicate frame removal
-    #[arg(long)]
-    pub no_dedup: bool,
-
     /// Output format: markdown, json, or both
     #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
     pub output: OutputFormat,

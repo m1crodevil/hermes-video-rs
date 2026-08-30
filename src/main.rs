@@ -10,7 +10,6 @@ use watch2::setup;
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let start_time = std::time::Instant::now();
     let cli = cli::Cli::parse();
     let config = WatchConfig::from_env();
 
@@ -83,7 +82,6 @@ async fn main() -> anyhow::Result<()> {
         work: work.clone(),
         download_dir,
         frames_dir,
-        start_time,
         cache,
     };
 
