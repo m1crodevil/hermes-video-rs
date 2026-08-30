@@ -4,8 +4,8 @@
 
 Config file: `~/.config/watch/.env`
 ```
-GROQ_API_KEY=gsk_...        # Required for Whisper fallback only
-OPENAI_API_KEY=sk-...        # Alternative Whisper provider
+GROQ_API_KEY=gsk_...    # Optional Whisper fallback
+OPENAI_API_KEY=sk_...     # Alternative Whisper provider
 SETUP_COMPLETE=true
 ```
 

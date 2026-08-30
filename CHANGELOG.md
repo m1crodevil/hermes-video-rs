@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [8.2.0] - 2026-08-30
+
+### Breaking changes
+- `WatchReport` now contains extraction evidence only; removed unused key-moment, scene-score, engine, detail, and dropped-frame fields.
+- Removed the inactive `--no-dedup` CLI flag, `fetch_captions()` API, language cache API, and local Whisper feature.
+
+### Changed
+- `report.json` is now written for every output format and refreshed on both workflow passes.
+- Simplified scene output to boundaries and removed unused score-file generation.
+- Replaced the Whisper provider trait/factory with a fixed backend enum; removed `async-trait` and `whisper-rs`.
+- Rewrote README and skill documentation around the agent-owned two-pass evidence workflow.
+
 ## [8.1.0] - 2026-08-02
 
 ### Bug Fixes
