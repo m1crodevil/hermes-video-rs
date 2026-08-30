@@ -241,12 +241,14 @@ async fn run_whisper_fallback(
     };
     if let (Some(key), Some(vp)) = (key, video_path.as_ref()) {
         eprintln!("[watch2] transcribing via {}...", backend);
-        if let Ok(audio) = whisper::extract_audio(vp, work) {
-            let provider = whisper::create_provider(backend);
-            match provider.transcribe(&audio, key).await {
+        if let (Ok(audio), Some(backend)) = (
+            whisper::extract_audio(vp, work),
+            whisper::WhisperBackend::from_name(backend),
+        ) {
+            match whisper::transcribe(backend, &audio, key).await {
                 Ok(segs) => {
                     *segments = segs;
-                    *source = format!("whisper ({})", backend);
+                    *source = format!("whisper ({})", backend.name());
                 }
                 Err(e) => eprintln!("[watch2] whisper error: {}", e),
             }
