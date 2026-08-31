@@ -1,75 +1,60 @@
 # watch2
 
-Rust video-evidence extraction for AI agents.
-
-`watch2` downloads a video, collects captions and scene boundaries, and extracts frames only at timestamps chosen by the invoking agent. It does not select moments or make content judgments.
+Rust evidence extraction for video-analysis agents. `watch2` downloads media through `yt-dlp`, parses captions, detects scenes, and extracts only the frames requested by the agent. It does not summarize or inspect frames itself.
 
 ## Install
 
 ```bash
 git clone https://github.com/m1crodevil/hermes-video-rs
 cd hermes-video-rs
-cargo build --release
+make install
 ```
 
-Runtime tools: `yt-dlp`, `ffmpeg`, `ffprobe`, and `av-scenechange`.
+Requires `yt-dlp`, `ffmpeg`, `ffprobe`, `av-scenechange`, and `jq` on `PATH`.
 
-## Workflow
+## Two-pass workflow
 
 ```bash
-# Pass 1: collect evidence. report.json is always written to --out-dir.
+# Pass 1: captions + scene evidence; report.json is always written.
 watch2 "https://youtu.be/VIDEO" --out-dir /tmp/watch --output json
 
-# Agent reads /tmp/watch/report.json and selects evidence timestamps.
-
-# Pass 2: extract the selected frames and refresh report.json.
+# The agent reads report.json, selects timestamps, then extracts frames.
 watch2 "https://youtu.be/VIDEO" \
-  --out-dir /tmp/watch \
-  --keep-video \
-  --timestamps "00:30,01:15,02:45" \
-  --output json
+  --out-dir /tmp/watch --keep-video \
+  --timestamps "00:30,01:15,02:45" --output json
 ```
 
-The report contains metadata, a timestamped transcript, scene boundaries, extracted-frame paths, and warnings. The agent owns moment selection, visual analysis, and conclusions.
-
-## CLI
-
-| Flag | Meaning |
-|---|---|
-| `--out-dir DIR` | Working directory; receives `report.json` |
-| `--timestamps T` | Comma-separated frame timestamps (`MM:SS`, `HH:MM:SS`, or seconds) |
-| `--resolution W` | Frame width, 128–4096; default 512 |
-| `--keep-video` | Keep the downloaded source video |
-| `--cookies` | Use Chrome cookies for yt-dlp |
-| `--no-whisper` | Disable Groq/OpenAI transcription fallback |
-| `--no-cache` | Disable the download cache |
-| `--cache-dir DIR` | Override cache location |
-| `--output markdown\|json\|both` | Select stdout format; `report.json` is still written |
-
-## Transcription fallback
-
-When captions are unavailable, set one key in `~/.config/watch/.env` or the environment:
+An agent may perform visual analysis only when:
 
 ```bash
-GROQ_API_KEY=gsk_...
-# or
-OPENAI_API_KEY=sk_...
+jq '.analysis_capabilities.visual_verification' /tmp/watch/report.json
+# true
 ```
+
+It must inspect every extracted frame. `false` means no visual claims are supported.
+
+## YouTube 403
+
+YouTube may deny video-stream requests while allowing metadata and captions. `watch2` fails immediately on this deterministic error rather than retrying it.
+
+```bash
+# Explicitly produce a captions-only report; visual_verification remains false.
+watch2 "URL" --allow-transcript-only --out-dir /tmp/watch --output json
+```
+
+Current yt-dlp guidance is to use a PO-token provider for affected video streams. `watch2` intentionally does not implement token generation; install and configure a supported yt-dlp provider in the yt-dlp environment. A cookie file is an alternative:
+
+```bash
+chmod 600 youtube-cookies.txt
+watch2 "URL" --cookies-file youtube-cookies.txt --out-dir /tmp/watch
+```
+
+Cookie files are never copied into reports or caches.
 
 ## Development
 
 ```bash
-cargo fmt --check
-cargo test --all-targets
-cargo clippy --all-targets -- -D warnings
-cargo build --release
+make check
 ```
-
-## Design
-
-- One Rust binary; no Python runtime.
-- Agent-selected timestamps are the only frame-extraction input.
-- `report.json` is a durable handoff artifact for both workflow passes.
-- Video, subtitles, and metadata are cached to avoid redundant downloads.
 
 MIT License.

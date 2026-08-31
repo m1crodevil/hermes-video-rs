@@ -1,4 +1,4 @@
-use watch2::output::{FrameInfo, TranscriptSegment, WatchReport};
+use watch2::output::{AnalysisCapabilities, FrameInfo, TranscriptSegment, WatchReport};
 
 fn report() -> WatchReport {
     WatchReport {
@@ -18,6 +18,13 @@ fn report() -> WatchReport {
             words: None,
         }],
         transcript_source: "captions".into(),
+        video_access: "available".into(),
+        analysis_capabilities: AnalysisCapabilities {
+            transcript: true,
+            scene_detection: false,
+            frame_extraction: true,
+            visual_verification: true,
+        },
         duration: 60.0,
         working_dir: "/tmp/watch2".into(),
         warnings: vec![],
@@ -33,6 +40,7 @@ fn json_contains_extraction_evidence() {
     assert_eq!(json["frames"][0]["timestamp"], 10.0);
     assert_eq!(json["transcript"][0]["text"], "hello");
     assert!(json.get("scene_boundaries").is_none());
+    assert_eq!(json["analysis_capabilities"]["visual_verification"], true);
 }
 
 #[test]

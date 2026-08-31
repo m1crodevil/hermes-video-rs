@@ -1,6 +1,6 @@
 use clap::Parser;
 use std::path::PathBuf;
-use watch2::cache::VideoCache;
+
 use watch2::cli;
 use watch2::config::WatchConfig;
 use watch2::pipeline::{self, PipelineContext};
@@ -36,30 +36,6 @@ async fn main() -> anyhow::Result<()> {
     // Save output format before moving cli into context
     let output_format = cli.output.clone();
 
-    // Initialize cache
-    let cache = if cli.no_cache {
-        None
-    } else {
-        let cache_dir = cli
-            .cache_dir
-            .as_deref()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| dirs::cache_dir().unwrap_or_default().join("watch2"));
-        match VideoCache::with_dir(cache_dir) {
-            Ok(c) => {
-                c.print_stats();
-                Some(c)
-            }
-            Err(e) => {
-                eprintln!(
-                    "[watch2] cache init error: {} — proceeding without cache",
-                    e
-                );
-                None
-            }
-        }
-    };
-
     // Create working directory
     let (work, _temp_dir) = match &cli.out_dir {
         Some(d) => (PathBuf::from(d), None),
@@ -82,7 +58,6 @@ async fn main() -> anyhow::Result<()> {
         work: work.clone(),
         download_dir,
         frames_dir,
-        cache,
     };
 
     let report = pipeline::run(ctx).await?;

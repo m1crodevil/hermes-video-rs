@@ -1,5 +1,7 @@
 use crate::config::{get_language_name, is_valid_lang, suggest_subtitle_language};
 use crate::error::{Result, WatchError};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -61,7 +63,7 @@ fn has_chrome_cookies() -> bool {
 ///
 /// Without these, metadata + subtitles may still work but video downloads
 /// fail with HTTP 403 Forbidden.
-pub fn ytdlp_network_opts(use_cookies: bool) -> Vec<String> {
+pub fn ytdlp_network_opts(use_cookies: bool, cookies_file: Option<&str>) -> Result<Vec<String>> {
     let mut opts = Vec::new();
     let home = dirs::home_dir().unwrap_or_default();
 
@@ -88,12 +90,23 @@ pub fn ytdlp_network_opts(use_cookies: bool) -> Vec<String> {
         opts.extend(["--impersonate".into(), "chrome".into()]);
     }
 
-    // Custom User-Agent for yt-dlp to avoid bot detection
-    opts.push("--user-agent".to_string());
-    opts.push("hermes-video-rs/4.1".to_string());
-
-    // Chrome cookies for authenticated sessions (opt-in only — breaks android_vr)
-    if use_cookies && has_chrome_cookies() {
+    // Cookies are explicit: a file works in headless environments and is safer
+    // than guessing a browser profile.
+    if let Some(path) = cookies_file {
+        let metadata = std::fs::metadata(path)
+            .map_err(|_| WatchError::Config("cookie file not found".into()))?;
+        #[cfg(unix)]
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(WatchError::Config(
+                "cookie file must not be group/world-readable; run chmod 600".into(),
+            ));
+        }
+        opts.extend(["--cookies".into(), path.into()]);
+        opts.extend([
+            "--extractor-args".into(),
+            "youtube:player_client=web".into(),
+        ]);
+    } else if use_cookies && has_chrome_cookies() {
         opts.extend(["--cookies-from-browser".into(), "chrome".into()]);
         opts.extend([
             "--extractor-args".into(),
@@ -101,7 +114,11 @@ pub fn ytdlp_network_opts(use_cookies: bool) -> Vec<String> {
         ]);
     }
 
-    opts
+    Ok(opts)
+}
+
+pub fn is_video_access_denied(stderr: &str) -> bool {
+    stderr.contains("HTTP Error 403") || stderr.contains("PO Token")
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +194,11 @@ fn subtitle_lang_pattern(lang: &str) -> String {
 /// Run `yt-dlp --list-subs` and parse available manual/auto subtitle languages.
 ///
 /// Returns `(manual: Vec<String>, auto: Vec<String>)` of language codes.
-fn list_available_subtitles(url: &str, use_cookies: bool) -> (Vec<String>, Vec<String>) {
+fn list_available_subtitles(
+    url: &str,
+    use_cookies: bool,
+    cookies_file: Option<&str>,
+) -> Result<(Vec<String>, Vec<String>)> {
     let mut cmd = Command::new("yt-dlp");
     let mut args: Vec<&str> = vec![
         "--skip-download",
@@ -187,7 +208,7 @@ fn list_available_subtitles(url: &str, use_cookies: bool) -> (Vec<String>, Vec<S
     ];
 
     // Apply network opts for YouTube reliability
-    let network_opts = ytdlp_network_opts(use_cookies);
+    let network_opts = ytdlp_network_opts(use_cookies, cookies_file)?;
     for opt in &network_opts {
         args.push(opt.as_str());
     }
@@ -196,7 +217,7 @@ fn list_available_subtitles(url: &str, use_cookies: bool) -> (Vec<String>, Vec<S
 
     let output = match cmd.args(&args).output() {
         Ok(o) => o,
-        Err(_) => return (Vec::new(), Vec::new()),
+        Err(_) => return Ok((Vec::new(), Vec::new())),
     };
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -234,7 +255,7 @@ fn list_available_subtitles(url: &str, use_cookies: bool) -> (Vec<String>, Vec<S
         }
     }
 
-    (manual, auto)
+    Ok((manual, auto))
 }
 
 // ---------------------------------------------------------------------------
@@ -245,6 +266,8 @@ pub fn download_video(
     url: &str,
     out_dir: &Path,
     use_cookies: bool,
+    cookies_file: Option<&str>,
+    allow_transcript_only: bool,
     llm_lang: Option<&str>,
     lang: Option<&str>,
 ) -> Result<DownloadResult> {
@@ -252,7 +275,7 @@ pub fn download_video(
     std::fs::create_dir_all(out_dir)?;
     let output_template = out_dir.join("video.%(ext)s").to_string_lossy().to_string();
 
-    let network_opts = ytdlp_network_opts(use_cookies);
+    let network_opts = ytdlp_network_opts(use_cookies, cookies_file)?;
 
     // --- Language detection: caller-provided > metadata > list-subs fallback ---
     let detected_lang = if let Some(l) = lang {
@@ -262,7 +285,8 @@ pub fn download_video(
         if let Some(ref l) = existing_info.language {
             l.clone()
         } else {
-            let (manual_subs, auto_subs) = list_available_subtitles(&url, use_cookies);
+            let (manual_subs, auto_subs) =
+                list_available_subtitles(&url, use_cookies, cookies_file)?;
             suggest_subtitle_language(
                 existing_info.language.as_deref(),
                 &manual_subs,
@@ -324,21 +348,28 @@ pub fn download_video(
         &url,
     ]);
 
-    let status = Command::new("yt-dlp").args(&args).status();
+    let output = Command::new("yt-dlp").args(&args).output();
 
-    match status {
-        Ok(s) if s.success() => {
+    match output {
+        Ok(output)
+            if output.status.success()
+                || (allow_transcript_only
+                    && is_video_access_denied(&String::from_utf8_lossy(&output.stderr))) =>
+        {
             let video_path = find_video(out_dir);
             let subtitle_path = find_subtitle(out_dir, &detected_lang);
             let info = extract_info(out_dir);
             let title = info.title.clone();
             Ok(DownloadResult {
-                video_path,
+                video_path: output.status.success().then_some(video_path).flatten(),
                 subtitle_path,
                 info,
                 title,
                 downloaded: true,
             })
+        }
+        Ok(output) if is_video_access_denied(&String::from_utf8_lossy(&output.stderr)) => {
+            Err(WatchError::VideoAccessDenied)
         }
         Ok(_) => Err(WatchError::Download("yt-dlp download failed".into())),
         Err(e) => Err(WatchError::Download(format!("yt-dlp not found: {}", e))),
@@ -756,6 +787,15 @@ mod tests {
     #[test]
     fn test_is_url_ftp() {
         assert!(!is_url("ftp://server.com/file"));
+    }
+
+    #[test]
+    fn recognizes_youtube_video_access_denial() {
+        assert!(is_video_access_denied(
+            "ERROR: unable to download video data: HTTP Error 403: Forbidden"
+        ));
+        assert!(is_video_access_denied("PO Token required"));
+        assert!(!is_video_access_denied("HTTP Error 429: Too Many Requests"));
     }
 
     #[test]

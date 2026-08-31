@@ -54,6 +54,8 @@ jq '.frames[] | {path, timestamp, reason}' /tmp/watch-XXX/report.json
 - Select timestamps from transcript and scene boundaries. Add enough coverage for the video duration.
 - Inspect every extracted frame before making visual claims.
 - Use `jq` for report inspection, never Python helpers.
+- Check `report.json.analysis_capabilities.visual_verification` before writing visual claims. It is true only when frames exist.
+- On YouTube HTTP 403, do not retry or claim visual analysis. Configure a yt-dlp PO-token provider, pass `--cookies-file` (0600), use a local video, or explicitly use `--allow-transcript-only`.
 - If `watch2` fails, inspect its error; use `ffprobe` or `ffmpeg` only for diagnosis or a documented manual fallback.
 - Return user-facing conclusions, not workflow logs or raw frame-by-frame notes unless requested.
 
@@ -66,8 +68,9 @@ jq '.frames[] | {path, timestamp, reason}' /tmp/watch-XXX/report.json
 | `--resolution W` | Frame width; 128–4096, default 512 |
 | `--keep-video` | Keep the downloaded source video |
 | `--cookies` | Use Chrome cookies for yt-dlp |
+| `--cookies-file PATH` | Use a permission-restricted Netscape cookie file |
+| `--allow-transcript-only` | Allow a report without visual evidence after a video-stream 403 |
 | `--no-whisper` | Disable Groq/OpenAI transcription fallback |
-| `--no-cache` / `--cache-dir DIR` | Control download cache |
 | `--output markdown|json|both` | Choose stdout format; JSON file is always written |
 
 ## Dependencies

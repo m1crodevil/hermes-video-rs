@@ -25,6 +25,14 @@ pub struct TranscriptSegment {
 }
 
 #[derive(Serialize)]
+pub struct AnalysisCapabilities {
+    pub transcript: bool,
+    pub scene_detection: bool,
+    pub frame_extraction: bool,
+    pub visual_verification: bool,
+}
+
+#[derive(Serialize)]
 pub struct WatchReport {
     pub title: String,
     pub source: String,
@@ -35,6 +43,8 @@ pub struct WatchReport {
     pub frames: Vec<FrameInfo>,
     pub transcript: Vec<TranscriptSegment>,
     pub transcript_source: String,
+    pub video_access: String,
+    pub analysis_capabilities: AnalysisCapabilities,
     pub duration: f64,
     pub working_dir: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -127,6 +137,13 @@ mod tests {
                 words: None,
             }],
             transcript_source: "captions".into(),
+            video_access: "local".into(),
+            analysis_capabilities: AnalysisCapabilities {
+                transcript: true,
+                scene_detection: false,
+                frame_extraction: false,
+                visual_verification: false,
+            },
             duration: 1.0,
             working_dir: "/tmp/test".into(),
             warnings: vec![],
@@ -140,6 +157,7 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&report().to_json()).unwrap();
         assert_eq!(json["title"], "Test");
         assert_eq!(json["transcript"][0]["text"], "hello");
+        assert_eq!(json["analysis_capabilities"]["visual_verification"], false);
     }
 
     #[test]

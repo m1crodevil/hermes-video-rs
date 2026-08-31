@@ -83,15 +83,16 @@ fn test_out_dir_default_none() {
 }
 
 #[test]
-fn test_no_cache_flag() {
-    let cli = Cli::try_parse_from(["watch", "test.mp4", "--no-cache"]).unwrap();
-    assert!(cli.no_cache);
+fn test_transcript_only_flag() {
+    let cli = Cli::try_parse_from(["watch", "test.mp4", "--allow-transcript-only"]).unwrap();
+    assert!(cli.allow_transcript_only);
 }
 
 #[test]
-fn test_cache_dir_flag() {
-    let cli = Cli::try_parse_from(["watch", "test.mp4", "--cache-dir", "/tmp/cache"]).unwrap();
-    assert_eq!(cli.cache_dir, Some("/tmp/cache".to_string()));
+fn test_cookies_file_flag() {
+    let cli =
+        Cli::try_parse_from(["watch", "test.mp4", "--cookies-file", "/tmp/cookies.txt"]).unwrap();
+    assert_eq!(cli.cookies_file, Some("/tmp/cookies.txt".to_string()));
 }
 
 #[test]

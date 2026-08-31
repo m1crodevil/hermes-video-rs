@@ -41,6 +41,14 @@ pub struct Cli {
     #[arg(long)]
     pub cookies: bool,
 
+    /// Netscape-format YouTube cookie file for yt-dlp
+    #[arg(long)]
+    pub cookies_file: Option<String>,
+
+    /// Permit a captions-only report when YouTube denies the video stream
+    #[arg(long)]
+    pub allow_transcript_only: bool,
+
     /// Disable Whisper fallback
     #[arg(long)]
     pub no_whisper: bool,
@@ -48,14 +56,6 @@ pub struct Cli {
     /// Output format: markdown, json, or both
     #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
     pub output: OutputFormat,
-
-    /// Disable download cache
-    #[arg(long)]
-    pub no_cache: bool,
-
-    /// Custom cache directory
-    #[arg(long)]
-    pub cache_dir: Option<String>,
 
     /// Comma-separated timestamps for cue frame extraction (e.g. "00:30,01:15,02:45")
     /// Extracts frames ONLY at these timestamps. Without this flag, no frames are extracted.

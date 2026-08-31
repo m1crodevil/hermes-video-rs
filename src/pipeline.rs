@@ -1,9 +1,8 @@
-use crate::cache::VideoCache;
 use crate::cli;
 use crate::config::WatchConfig;
 use crate::download;
 use crate::frames;
-use crate::output::{FrameInfo, WatchReport};
+use crate::output::{AnalysisCapabilities, FrameInfo, WatchReport};
 use crate::timestamp;
 use crate::transcript;
 use crate::whisper;
@@ -15,7 +14,6 @@ pub struct PipelineContext {
     pub work: PathBuf,
     pub download_dir: PathBuf,
     pub frames_dir: PathBuf,
-    pub cache: Option<VideoCache>,
 }
 
 /// Single-run pipeline — download, analyse, extract frames, report.
@@ -26,7 +24,6 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         work,
         download_dir,
         frames_dir,
-        mut cache,
     } = ctx;
 
     // ── Step 1: Download video + subtitle + scene detect ──────────────
@@ -35,9 +32,9 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         ensure_resources(
             &cli.source,
             &download_dir,
-            &mut cache,
             cli.cookies,
-            cli.no_cache,
+            cli.cookies_file.as_deref(),
+            cli.allow_transcript_only,
         )?
     } else {
         (download::resolve_local(&cli.source)?, vec![])
@@ -141,6 +138,8 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         dl_result.title.clone()
     };
     let scene_count = (!scene_boundaries.is_empty()).then_some(scene_boundaries.len());
+    let has_transcript = !transcript_segments.is_empty();
+    let has_frames = !frame_vec.is_empty();
     let report = WatchReport {
         title,
         source: cli.source.clone(),
@@ -149,6 +148,19 @@ pub async fn run(ctx: PipelineContext) -> anyhow::Result<WatchReport> {
         frames: frame_vec,
         transcript: transcript_segments,
         transcript_source,
+        video_access: if is_url && video_path.is_none() {
+            "denied".into()
+        } else if is_url {
+            "available".into()
+        } else {
+            "local".into()
+        },
+        analysis_capabilities: AnalysisCapabilities {
+            transcript: has_transcript,
+            scene_detection: !scene_boundaries.is_empty(),
+            frame_extraction: has_frames,
+            visual_verification: has_frames,
+        },
         duration,
         working_dir: work.to_string_lossy().into_owned(),
         warnings: frame_warnings(&frame_meta, duration),
@@ -193,9 +205,13 @@ fn detect_scenes(vp: &std::path::Path, duration: f64) -> Vec<crate::scene_detect
 }
 /// Quick language detection via yt-dlp metadata (no video download).
 /// Returns language code or None if detection fails.
-fn detect_language_quick(url: &str, use_cookies: bool) -> Option<String> {
+fn detect_language_quick(
+    url: &str,
+    use_cookies: bool,
+    cookies_file: Option<&str>,
+) -> Option<String> {
     let url = crate::download::sanitize_url(url);
-    let network_opts = crate::download::ytdlp_network_opts(use_cookies);
+    let network_opts = crate::download::ytdlp_network_opts(use_cookies, cookies_file).ok()?;
     let mut args: Vec<&str> = vec![
         "--skip-download",
         "--write-info-json",
@@ -260,77 +276,31 @@ async fn run_whisper_fallback(
 fn ensure_resources(
     source: &str,
     download_dir: &std::path::Path,
-    cache: &mut Option<crate::cache::VideoCache>,
     use_cookies: bool,
-    no_cache: bool,
+    cookies_file: Option<&str>,
+    allow_transcript_only: bool,
 ) -> anyhow::Result<(
     crate::download::DownloadResult,
     Vec<crate::scene_detect::SceneBoundary>,
 )> {
     std::fs::create_dir_all(download_dir)?;
 
-    // Cache hit
-    if !no_cache
-        && let Some(c) = cache
-        && let Some(cached) = c.get_video(source)
-        && cached.exists()
-        && cached
-            .metadata()
-            .map(|m| m.len() > 1_000_000)
-            .unwrap_or(false)
-    {
-        eprintln!("[watch2] ✓ video from cache");
-        let dest = download_dir.join("video.mp4");
-        std::fs::copy(&cached, &dest)?;
-        let info = c.get_info(source).unwrap_or_default();
-        let sub = c
-            .get_subtitles(source, &info.language.clone().unwrap_or_default())
-            .and_then(|sp| {
-                let d = download_dir.join(sp.file_name()?.to_string_lossy().to_string());
-                std::fs::copy(&sp, &d).ok()?;
-                Some(d)
-            });
-        let bounds = detect_scenes(&dest, info.duration.unwrap_or(0.0));
-        return Ok((
-            crate::download::DownloadResult {
-                video_path: Some(dest),
-                subtitle_path: sub,
-                title: info.title.clone(),
-                info,
-                downloaded: false,
-            },
-            bounds,
-        ));
-    }
-
-    // Download with retry
+    // Download with retry for transient failures only.
     let mut last_err: Option<crate::error::WatchError> = None;
     // Detect language before download to minimize subtitle requests
-    let detected_lang = detect_language_quick(source, use_cookies);
+    let detected_lang = detect_language_quick(source, use_cookies, cookies_file);
     for attempt in 1..=3u32 {
         eprintln!("[watch2] downloading (attempt {}/3)...", attempt);
         match crate::download::download_video(
             source,
             download_dir,
             use_cookies,
+            cookies_file,
+            allow_transcript_only,
             None,
             detected_lang.as_deref(),
         ) {
             Ok(result) => {
-                // Cache the result
-                if let Some(c) = cache {
-                    if let Some(ref vp) = result.video_path {
-                        let _ = c.store_video(source, vp);
-                    }
-                    if let Some(ref sp) = result.subtitle_path {
-                        let _ = c.store_subtitles(
-                            source,
-                            &result.info.language.clone().unwrap_or_default(),
-                            sp,
-                        );
-                    }
-                    let _ = c.store_info(source, &result.info);
-                }
                 let bounds = if let Some(ref vp) = result.video_path {
                     detect_scenes(vp, result.info.duration.unwrap_or(0.0))
                 } else {
@@ -340,6 +310,13 @@ fn ensure_resources(
             }
             Err(e) => {
                 eprintln!("[watch2] ✗ download failed: {}", e);
+                if matches!(
+                    e,
+                    crate::error::WatchError::VideoAccessDenied
+                        | crate::error::WatchError::Config(_)
+                ) {
+                    return Err(e.into());
+                }
                 last_err = Some(e);
                 if attempt < 3 {
                     let delay = std::time::Duration::from_secs(2u64.pow(attempt));

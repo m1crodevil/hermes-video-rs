@@ -5,6 +5,11 @@ pub enum WatchError {
     #[error("yt-dlp error: {0}")]
     Download(String),
 
+    #[error(
+        "YouTube denied the video stream (HTTP 403). Configure a PO-token provider or use --cookies-file /path/to/youtube-cookies.txt; captions alone cannot support visual verification."
+    )]
+    VideoAccessDenied,
+
     #[error("ffmpeg error: {0}")]
     Ffmpeg(String),
 
@@ -41,6 +46,15 @@ mod tests {
     fn display_download() {
         let e = WatchError::Download("timeout".into());
         assert_eq!(e.to_string(), "yt-dlp error: timeout");
+    }
+
+    #[test]
+    fn display_video_access_denied() {
+        assert!(
+            WatchError::VideoAccessDenied
+                .to_string()
+                .contains("HTTP 403")
+        );
     }
 
     #[test]
