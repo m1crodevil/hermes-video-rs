@@ -55,7 +55,7 @@ jq '.frames[] | {path, timestamp, reason}' /tmp/watch-XXX/report.json
 - Inspect every extracted frame before making visual claims.
 - Use `jq` for report inspection, never Python helpers.
 - Check `report.json.analysis_capabilities.visual_verification` before writing visual claims. It is true only when frames exist.
-- On YouTube HTTP 403, do not retry or claim visual analysis. Configure a yt-dlp PO-token provider, pass `--cookies-file` (0600), use a local video, or explicitly use `--allow-transcript-only`.
+- On YouTube HTTP 403, do not retry or claim visual analysis. Verify `yt-dlp -v URL` lists a PO-token provider and use the `mweb` client; then pass `--cookies-file` (0600), use a local video, or explicitly use `--allow-transcript-only`.
 - If `watch2` fails, inspect its error; use `ffprobe` or `ffmpeg` only for diagnosis or a documented manual fallback.
 - Return user-facing conclusions, not workflow logs or raw frame-by-frame notes unless requested.
 

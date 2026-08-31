@@ -42,14 +42,13 @@ YouTube may deny video-stream requests while allowing metadata and captions. `wa
 watch2 "URL" --allow-transcript-only --out-dir /tmp/watch --output json
 ```
 
-Current yt-dlp guidance is to use a PO-token provider for affected video streams. `watch2` intentionally does not implement token generation; install and configure a supported yt-dlp provider in the yt-dlp environment. A cookie file is an alternative:
+Current yt-dlp guidance is to use an external PO-token provider with the `mweb` client for affected streams. `watch2` intentionally does not generate tokens. See [YouTube access](docs/youtube-access.md) for the local BgUtils setup, verification, and cookie fallback.
+
+Cookie files must be `0600` and are never copied into reports.
 
 ```bash
-chmod 600 youtube-cookies.txt
-watch2 "URL" --cookies-file youtube-cookies.txt --out-dir /tmp/watch
+RUN_YOUTUBE_SMOKE=1 YOUTUBE_SMOKE_URL=URL make youtube-smoke
 ```
-
-Cookie files are never copied into reports or caches.
 
 ## Development
 

@@ -6,7 +6,7 @@ pub enum WatchError {
     Download(String),
 
     #[error(
-        "YouTube denied the video stream (HTTP 403). Configure a PO-token provider or use --cookies-file /path/to/youtube-cookies.txt; captions alone cannot support visual verification."
+        "YouTube denied the video stream (HTTP 403). yt-dlp needs a PO-token provider for mweb/GVS attestation; verify `yt-dlp -v URL` lists a provider, or use --cookies-file /path/to/youtube-cookies.txt. Captions alone cannot support visual verification."
     )]
     VideoAccessDenied,
 

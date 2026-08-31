@@ -90,6 +90,13 @@ pub fn ytdlp_network_opts(use_cookies: bool, cookies_file: Option<&str>) -> Resu
         opts.extend(["--impersonate".into(), "chrome".into()]);
     }
 
+    // mweb is yt-dlp's recommended client when a PO-token provider handles
+    // GVS attestation. Without a provider, yt-dlp still returns its normal 403.
+    opts.extend([
+        "--extractor-args".into(),
+        "youtube:player_client=mweb".into(),
+    ]);
+
     // Cookies are explicit: a file works in headless environments and is safer
     // than guessing a browser profile.
     if let Some(path) = cookies_file {
@@ -119,6 +126,10 @@ pub fn ytdlp_network_opts(use_cookies: bool, cookies_file: Option<&str>) -> Resu
 
 pub fn is_video_access_denied(stderr: &str) -> bool {
     stderr.contains("HTTP Error 403") || stderr.contains("PO Token")
+}
+
+pub fn has_po_token_provider(stderr: &str) -> bool {
+    stderr.contains("PO Token Providers:") && !stderr.contains("PO Token Providers: none")
 }
 
 // ---------------------------------------------------------------------------
@@ -787,6 +798,16 @@ mod tests {
     #[test]
     fn test_is_url_ftp() {
         assert!(!is_url("ftp://server.com/file"));
+    }
+
+    #[test]
+    fn detects_installed_po_token_provider() {
+        assert!(has_po_token_provider(
+            "[debug] [youtube] [pot] PO Token Providers: bgutil:http-1.3.2 (external)"
+        ));
+        assert!(!has_po_token_provider(
+            "[debug] [youtube] [pot] PO Token Providers: none"
+        ));
     }
 
     #[test]

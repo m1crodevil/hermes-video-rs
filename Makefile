@@ -1,7 +1,7 @@
 BIN := target/release/watch2
 INSTALL_DIR ?= $(HOME)/.local/bin
 
-.PHONY: check build install
+.PHONY: check build install youtube-smoke
 
 check:
 	cargo fmt --check
@@ -14,3 +14,6 @@ build:
 install: build
 	install -Dm755 $(BIN) $(INSTALL_DIR)/watch2
 	$(INSTALL_DIR)/watch2 --version
+
+youtube-smoke:
+	./scripts/youtube-smoke.sh
